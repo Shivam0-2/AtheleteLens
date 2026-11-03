@@ -12,11 +12,15 @@ import argparse
 import csv
 import json
 import math
-import statistics
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+try:
+    from .athletelens_ai.signals import optional_angle, rolling_median
+except ImportError:
+    from athletelens_ai.signals import optional_angle, rolling_median
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -125,9 +129,7 @@ def load_measurements(path: Path, label: str) -> MeasurementSeries:
                         "true", "1", "yes"
                     }
                     poses.append(is_pose)
-                    raw_angle = (row.get("elbow_angle_deg") or "").strip()
-                    angle = float(raw_angle) if raw_angle else None
-                    angles.append(angle if angle is not None and math.isfinite(angle) else None)
+                    angles.append(optional_angle(row.get("elbow_angle_deg")))
                 except (AttributeError, TypeError, ValueError) as exc:
                     raise ValueError(f"Invalid data in {path}, row {row_number}: {exc}") from exc
     except OSError as exc:
@@ -136,28 +138,6 @@ def load_measurements(path: Path, label: str) -> MeasurementSeries:
     if not frames:
         raise ValueError(f"Input CSV has no frame rows: {path}")
     return MeasurementSeries(label, path.resolve(), frames, timestamps, angles, poses)
-
-
-def rolling_median(values: list[float | None], window: int) -> list[float | None]:
-    """Smooth each contiguous run of values without bridging missing-angle gaps."""
-    radius = window // 2
-    smoothed: list[float | None] = [None] * len(values)
-    segment_start = 0
-    while segment_start < len(values):
-        while segment_start < len(values) and values[segment_start] is None:
-            segment_start += 1
-        if segment_start >= len(values):
-            break
-        segment_end = segment_start
-        while segment_end < len(values) and values[segment_end] is not None:
-            segment_end += 1
-        for index in range(segment_start, segment_end):
-            left = max(segment_start, index - radius)
-            right = min(segment_end, index + radius + 1)
-            sample = [float(value) for value in values[left:right] if value is not None]
-            smoothed[index] = statistics.median(sample)
-        segment_start = segment_end
-    return smoothed
 
 
 def count_repetitions(

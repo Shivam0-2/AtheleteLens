@@ -12,7 +12,6 @@ import csv
 import hashlib
 import json
 import math
-import statistics
 import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -20,8 +19,10 @@ from typing import Any
 
 try:  # Package invocation: python -m ai_engine.phase_based_analysis
     from .pushup_analysis import PushUpRepetitionCounter
+    from .athletelens_ai.signals import optional_angle, rolling_median
 except ImportError:  # Standalone invocation from the ai_engine directory
     from pushup_analysis import PushUpRepetitionCounter
+    from athletelens_ai.signals import optional_angle, rolling_median
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -72,31 +73,6 @@ class MeasurementSeries:
     angles: list[float | None]
 
 
-def rolling_median(values: list[float | None], window: int = 7) -> list[float | None]:
-    """Centered median filter over contiguous valid-angle runs; no gap filling."""
-    if window < 1 or window % 2 == 0:
-        raise ValueError("Rolling-median window must be a positive odd number")
-    radius = window // 2
-    smoothed: list[float | None] = [None] * len(values)
-    cursor = 0
-    while cursor < len(values):
-        while cursor < len(values) and values[cursor] is None:
-            cursor += 1
-        if cursor == len(values):
-            break
-        start = cursor
-        while cursor < len(values) and values[cursor] is not None:
-            cursor += 1
-        end = cursor
-        for index in range(start, end):
-            left = max(start, index - radius)
-            right = min(end, index + radius + 1)
-            smoothed[index] = statistics.median(
-                float(value) for value in values[left:right] if value is not None
-            )
-    return smoothed
-
-
 def load_measurements(path: Path, label: str) -> MeasurementSeries:
     """Read the frame, timestamp, and selected elbow angle columns."""
     required = {"frame_number", "timestamp_ms", "elbow_angle_deg"}
@@ -112,9 +88,7 @@ def load_measurements(path: Path, label: str) -> MeasurementSeries:
             try:
                 frames.append(int(row["frame_number"]))
                 timestamps.append(int(row["timestamp_ms"]))
-                value = (row.get("elbow_angle_deg") or "").strip()
-                angle = float(value) if value else None
-                angles.append(angle if angle is not None and math.isfinite(angle) else None)
+                angles.append(optional_angle(row.get("elbow_angle_deg")))
             except (TypeError, ValueError) as exc:
                 raise ValueError(f"Invalid data in {path}, row {row_number}: {exc}") from exc
     if not frames:

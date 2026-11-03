@@ -16,6 +16,21 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+try:
+    from .athletelens_ai.pose import (
+        create_video_landmarker,
+        load_pose_dependencies,
+        process_video_frame,
+    )
+    from .athletelens_ai.video import frame_timestamp_ms, iter_video_frames, open_video
+except ImportError:
+    from athletelens_ai.pose import (
+        create_video_landmarker,
+        load_pose_dependencies,
+        process_video_frame,
+    )
+    from athletelens_ai.video import frame_timestamp_ms, iter_video_frames, open_video
+
 
 JOINT_NAMES = ("shoulder", "elbow", "wrist")
 LANDMARK_FIELDS = ("x", "y", "z", "visibility", "presence")
@@ -220,22 +235,13 @@ def analyze_video(
     min_visibility: float,
 ) -> dict[str, Any]:
     """Process each frame, write raw measurements, then write a summary."""
-    try:
-        import cv2
-        import mediapipe as mp
-        import numpy as np
-    except ImportError as exc:
-        raise RuntimeError(
-            "A required dependency is unavailable. Activate the ai_engine "
-            "virtual environment and run: python -m pip install -r requirements.txt"
-        ) from exc
+    cv2, mp, np = load_pose_dependencies()
 
-    capture = cv2.VideoCapture(str(video_path))
-    if not capture.isOpened():
-        capture.release()
-        raise ValueError(f"Could not open input video: {video_path}")
+    capture, metadata = open_video(
+        video_path, cv2, error_message="Could not open input video"
+    )
 
-    fps = float(capture.get(cv2.CAP_PROP_FPS))
+    fps = metadata.fps
     if not math.isfinite(fps) or fps <= 0:
         capture.release()
         raise ValueError(f"Input video has invalid FPS metadata: {fps}")
@@ -250,15 +256,8 @@ def analyze_video(
     csv_columns = build_csv_columns()
 
     try:
-        options = mp.tasks.vision.PoseLandmarkerOptions(
-            base_options=mp.tasks.BaseOptions(model_asset_path=str(model_path)),
-            running_mode=mp.tasks.vision.RunningMode.VIDEO,
-            num_poses=1,
-        )
         try:
-            landmarker_context = mp.tasks.vision.PoseLandmarker.create_from_options(
-                options
-            )
+            landmarker_context = create_video_landmarker(mp, str(model_path))
         except (OSError, RuntimeError, ValueError) as exc:
             raise ValueError(
                 f"Could not initialize Pose Landmarker from model '{model_path}'. "
@@ -270,23 +269,14 @@ def analyze_video(
             writer.writeheader()
 
             with landmarker_context as landmarker:
-                while True:
-                    success, frame_bgr = capture.read()
-                    if not success:
-                        break
-
+                for frame_index, frame_bgr in iter_video_frames(capture):
                     frame_number = processed_frames + 1
-                    timestamp_ms = max(
-                        previous_timestamp_ms + 1,
-                        int(round(processed_frames * 1000.0 / fps)),
+                    timestamp_ms = frame_timestamp_ms(
+                        frame_index, fps, previous_timestamp_ms
                     )
                     previous_timestamp_ms = timestamp_ms
-                    frame_rgb = np.ascontiguousarray(
-                        cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
-                    )
-                    result = landmarker.detect_for_video(
-                        mp.Image(image_format=mp.ImageFormat.SRGB, data=frame_rgb),
-                        timestamp_ms,
+                    result = process_video_frame(
+                        frame_bgr, timestamp_ms, landmarker, cv2, mp, np
                     )
 
                     angle = None

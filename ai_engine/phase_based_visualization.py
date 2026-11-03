@@ -24,9 +24,23 @@ try:
         run_signal,
     )
     from .pushup_analysis import choose_elbow_angle
+    from .athletelens_ai.pose import (
+        create_video_landmarker,
+        load_pose_dependencies,
+        process_video_frame,
+    )
+    from .athletelens_ai.video import frame_timestamp_ms, iter_video_frames, open_video
+    from .athletelens_ai.visualization import draw_normalized_points
 except ImportError:
     from phase_based_analysis import DetectorConfig, MeasurementSeries, rolling_median, run_signal
     from pushup_analysis import choose_elbow_angle
+    from athletelens_ai.pose import (
+        create_video_landmarker,
+        load_pose_dependencies,
+        process_video_frame,
+    )
+    from athletelens_ai.video import frame_timestamp_ms, iter_video_frames, open_video
+    from athletelens_ai.visualization import draw_normalized_points
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -113,33 +127,6 @@ def _pose_payload(result: Any) -> FramePose:
     return FramePose(points, side, angle, tracking_visibility, True)
 
 
-def _draw_pose(
-    frame: Any,
-    points: list[tuple[float, float] | None],
-    connections: list[Any],
-    cv2: Any,
-) -> None:
-    """Draw the MediaPipe pose connections and available landmark points."""
-    height, width = frame.shape[:2]
-
-    def pixel(point: tuple[float, float]) -> tuple[int, int]:
-        x = min(width - 1, max(0, int(round(point[0] * (width - 1)))) )
-        y = min(height - 1, max(0, int(round(point[1] * (height - 1)))) )
-        return x, y
-
-    for connection in connections:
-        start_index, end_index = int(connection.start), int(connection.end)
-        if start_index >= len(points) or end_index >= len(points):
-            continue
-        start, end = points[start_index], points[end_index]
-        if start is not None and end is not None:
-            cv2.line(frame, pixel(start), pixel(end), (45, 220, 70), 2, cv2.LINE_AA)
-
-    for point in points:
-        if point is not None:
-            cv2.circle(frame, pixel(point), 3, (20, 235, 250), -1, cv2.LINE_AA)
-
-
 def _draw_overlay(
     frame: Any,
     phase: str,
@@ -212,16 +199,7 @@ def _draw_overlay(
 
 
 def _load_dependencies() -> tuple[Any, Any, Any]:
-    try:
-        import cv2
-        import mediapipe as mp
-        import numpy as np
-    except ImportError as exc:
-        raise RuntimeError(
-            "A required dependency is unavailable. Activate ai_engine/.venv "
-            "and install ai_engine/requirements.txt."
-        ) from exc
-    return cv2, mp, np
+    return load_pose_dependencies()
 
 
 def render_video(
@@ -232,14 +210,13 @@ def render_video(
     config = configured_detector()
     config.validate()
 
-    capture = cv2.VideoCapture(str(video_path))
-    if not capture.isOpened():
-        capture.release()
-        raise ValueError(f"Could not open input video: {video_path}")
+    capture, metadata = open_video(
+        video_path, cv2, error_message="Could not open input video"
+    )
 
-    fps = float(capture.get(cv2.CAP_PROP_FPS))
-    width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
-    height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    fps = metadata.fps
+    width = metadata.width
+    height = metadata.height
     if not math.isfinite(fps) or fps <= 0 or width <= 0 or height <= 0:
         capture.release()
         raise ValueError(
@@ -253,15 +230,8 @@ def render_video(
     previous_timestamp_ms = -1
     landmarker_context = None
     try:
-        options = mp.tasks.vision.PoseLandmarkerOptions(
-            base_options=mp.tasks.BaseOptions(model_asset_path=str(model_path)),
-            running_mode=mp.tasks.vision.RunningMode.VIDEO,
-            num_poses=1,
-        )
         try:
-            landmarker_context = mp.tasks.vision.PoseLandmarker.create_from_options(
-                options
-            )
+            landmarker_context = create_video_landmarker(mp, str(model_path))
         except (OSError, RuntimeError, ValueError) as exc:
             raise ValueError(
                 f"Could not initialize Pose Landmarker from '{model_path}'. "
@@ -269,19 +239,13 @@ def render_video(
             ) from exc
 
         with landmarker_context as landmarker:
-            frame_index = 0
-            while True:
-                success, frame_bgr = capture.read()
-                if not success:
-                    break
-                timestamp_ms = max(
-                    previous_timestamp_ms + 1,
-                    int(round(frame_index * 1000.0 / fps)),
+            for frame_index, frame_bgr in iter_video_frames(capture):
+                timestamp_ms = frame_timestamp_ms(
+                    frame_index, fps, previous_timestamp_ms
                 )
                 previous_timestamp_ms = timestamp_ms
-                rgb = np.ascontiguousarray(cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB))
-                result = landmarker.detect_for_video(
-                    mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb), timestamp_ms
+                result = process_video_frame(
+                    frame_bgr, timestamp_ms, landmarker, cv2, mp, np
                 )
                 payload = _pose_payload(result)
                 angle = payload.elbow_angle_deg
@@ -291,7 +255,6 @@ def render_video(
                 timestamps.append(timestamp_ms)
                 angles.append(angle)
                 poses.append(payload)
-                frame_index += 1
     finally:
         capture.release()
 
@@ -322,10 +285,9 @@ def render_video(
 
     pose_connections = mp.tasks.vision.PoseLandmarksConnections.POSE_LANDMARKS
     writer = None
-    output_capture = cv2.VideoCapture(str(video_path))
-    if not output_capture.isOpened():
-        output_capture.release()
-        raise ValueError(f"Could not reopen input video for rendering: {video_path}")
+    output_capture, _output_metadata = open_video(
+        video_path, cv2, error_message="Could not reopen input video for rendering"
+    )
 
     try:
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")
@@ -342,17 +304,16 @@ def render_video(
         marker_frames_left = 0
         marker_duration_frames = max(1, int(round(fps * 0.7)))
 
-        for index, row in enumerate(state_rows):
-            success, frame_bgr = output_capture.read()
-            if not success:
-                raise ValueError(
-                    f"Input video ended during rendering at frame {index + 1}"
-                )
+        rendered_frames = 0
+        for index, frame_bgr in iter_video_frames(output_capture):
+            if index >= len(state_rows):
+                raise RuntimeError("Input frame count changed between detection and rendering passes")
+            row = state_rows[index]
             current_count = int(row["repetition_count"])
             if current_count > previous_count:
                 marker_rep = current_count
                 marker_frames_left = marker_duration_frames
-            _draw_pose(frame_bgr, poses[index].points, pose_connections, cv2)
+            draw_normalized_points(frame_bgr, poses[index].points, pose_connections, cv2)
             _draw_overlay(
                 frame_bgr,
                 row["movement_state"],
@@ -366,14 +327,15 @@ def render_video(
                 cv2,
             )
             writer.write(frame_bgr)
+            rendered_frames += 1
             if marker_frames_left > 0:
                 marker_frames_left -= 1
             previous_count = current_count
 
-        # Ensure output had exactly one rendered frame for each input frame.
-        extra_success, _extra_frame = output_capture.read()
-        if extra_success:
-            raise RuntimeError("Input frame count changed between detection and rendering passes")
+        if rendered_frames != len(state_rows):
+            raise ValueError(
+                f"Input video ended during rendering after {rendered_frames} frames"
+            )
     finally:
         output_capture.release()
         if writer is not None:

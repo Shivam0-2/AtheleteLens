@@ -13,6 +13,25 @@ import sys
 from pathlib import Path
 from typing import Any
 
+try:
+    from .athletelens_ai.pose import (
+        available_landmark_data,
+        create_video_landmarker,
+        extract_landmark_sets,
+        load_pose_dependencies,
+        process_video_frame,
+    )
+    from .athletelens_ai.video import frame_timestamp_ms, iter_video_frames, open_video
+except ImportError:
+    from athletelens_ai.pose import (
+        available_landmark_data,
+        create_video_landmarker,
+        extract_landmark_sets,
+        load_pose_dependencies,
+        process_video_frame,
+    )
+    from athletelens_ai.video import frame_timestamp_ms, iter_video_frames, open_video
+
 
 def parse_args() -> argparse.Namespace:
     """Parse command-line arguments."""
@@ -35,49 +54,15 @@ def parse_args() -> argparse.Namespace:
     return args
 
 
-def available_landmark_data(landmark: Any) -> dict[str, float]:
-    """Return coordinates and confidence fields that MediaPipe supplied."""
-    values: dict[str, float] = {}
-    for field in ("x", "y", "z", "visibility", "presence"):
-        value = getattr(landmark, field, None)
-        if value is not None:
-            values[field] = float(value)
-    return values
-
-
-def extract_landmark_sets(result: Any, attribute: str) -> list[list[dict[str, Any]]]:
-    """Serialize every pose in a result field without filling missing data."""
-    poses: list[list[dict[str, Any]]] = []
-    for pose in getattr(result, attribute, None) or []:
-        poses.append(
-            [
-                {"index": index, **available_landmark_data(landmark)}
-                for index, landmark in enumerate(pose)
-            ]
-        )
-    return poses
-
-
 def run(video_path: Path, model_path: Path, sample_frame_limit: int) -> dict[str, Any]:
     """Process the video sequentially and return detection statistics."""
-    try:
-        import cv2
-        import mediapipe as mp
-        import numpy as np
-    except ImportError as exc:
-        raise RuntimeError(
-            "A required dependency is unavailable. Activate the ai_engine "
-            "virtual environment and run: python -m pip install -r requirements.txt"
-        ) from exc
+    cv2, mp, np = load_pose_dependencies()
 
-    capture = cv2.VideoCapture(str(video_path))
-    if not capture.isOpened():
-        capture.release()
-        raise ValueError(f"Could not open video: {video_path}")
+    capture, metadata = open_video(video_path, cv2)
 
-    fps = float(capture.get(cv2.CAP_PROP_FPS))
-    width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
-    height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    fps = metadata.fps
+    width = metadata.width
+    height = metadata.height
     if not math.isfinite(fps) or fps <= 0 or width <= 0 or height <= 0:
         capture.release()
         raise ValueError(
@@ -86,14 +71,8 @@ def run(video_path: Path, model_path: Path, sample_frame_limit: int) -> dict[str
         )
 
     try:
-        options = mp.tasks.vision.PoseLandmarkerOptions(
-            base_options=mp.tasks.BaseOptions(model_asset_path=str(model_path)),
-            running_mode=mp.tasks.vision.RunningMode.VIDEO,
-        )
         try:
-            landmarker_context = mp.tasks.vision.PoseLandmarker.create_from_options(
-                options
-            )
+            landmarker_context = create_video_landmarker(mp, str(model_path))
         except (OSError, RuntimeError, ValueError) as exc:
             raise ValueError(
                 f"Could not initialize Pose Landmarker from model '{model_path}'. "
@@ -106,27 +85,16 @@ def run(video_path: Path, model_path: Path, sample_frame_limit: int) -> dict[str
         sample_frames: list[dict[str, Any]] = []
 
         with landmarker_context as landmarker:
-            while True:
-                success, frame_bgr = capture.read()
-                if not success:
-                    break
-
-                frame_index = processed_frames
+            for frame_index, frame_bgr in iter_video_frames(capture):
                 # Derive time from the media rate; clamp to guarantee strictly
                 # increasing integer timestamps even for unusual FPS metadata.
-                timestamp_ms = max(
-                    previous_timestamp_ms + 1,
-                    int(round(frame_index * 1000.0 / fps)),
+                timestamp_ms = frame_timestamp_ms(
+                    frame_index, fps, previous_timestamp_ms
                 )
                 previous_timestamp_ms = timestamp_ms
-
-                frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
-                frame_rgb = np.ascontiguousarray(frame_rgb)
-                mp_image = mp.Image(
-                    image_format=mp.ImageFormat.SRGB,
-                    data=frame_rgb,
+                result = process_video_frame(
+                    frame_bgr, timestamp_ms, landmarker, cv2, mp, np
                 )
-                result = landmarker.detect_for_video(mp_image, timestamp_ms)
                 frame_poses = extract_landmark_sets(result, "pose_landmarks")
                 frame_world_poses = extract_landmark_sets(
                     result, "pose_world_landmarks"

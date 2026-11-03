@@ -8,6 +8,23 @@ import sys
 from pathlib import Path
 from typing import Any
 
+try:
+    from .athletelens_ai.pose import (
+        create_video_landmarker,
+        load_pose_dependencies,
+        process_video_frame,
+    )
+    from .athletelens_ai.video import frame_timestamp_ms, iter_video_frames, open_video
+    from .athletelens_ai.visualization import draw_pose_landmarks
+except ImportError:
+    from athletelens_ai.pose import (
+        create_video_landmarker,
+        load_pose_dependencies,
+        process_video_frame,
+    )
+    from athletelens_ai.video import frame_timestamp_ms, iter_video_frames, open_video
+    from athletelens_ai.visualization import draw_pose_landmarks
+
 
 def parse_args() -> argparse.Namespace:
     """Parse paths for the input video, task model, and rendered output."""
@@ -24,34 +41,19 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def _load_dependencies() -> tuple[Any, Any, Any]:
-    """Import runtime dependencies and provide a setup hint when unavailable."""
-    try:
-        import cv2
-        import mediapipe as mp
-        import numpy as np
-    except ImportError as exc:
-        raise RuntimeError(
-            "A required dependency is unavailable. Activate the ai_engine "
-            "virtual environment and run: python -m pip install -r requirements.txt"
-        ) from exc
-    return cv2, mp, np
-
-
 def render_video(video_path: Path, model_path: Path, output_path: Path) -> int:
     """Process every input frame and write an annotated MP4; return frame count."""
-    cv2, mp, np = _load_dependencies()
+    cv2, mp, np = load_pose_dependencies()
 
-    capture = cv2.VideoCapture(str(video_path))
-    if not capture.isOpened():
-        capture.release()
-        raise ValueError(f"Could not open input video: {video_path}")
+    capture, metadata = open_video(
+        video_path, cv2, error_message="Could not open input video"
+    )
 
     writer = None
     try:
-        fps = float(capture.get(cv2.CAP_PROP_FPS))
-        width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
-        height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        fps = metadata.fps
+        width = metadata.width
+        height = metadata.height
         if not math.isfinite(fps) or fps <= 0 or width <= 0 or height <= 0:
             raise ValueError(
                 f"Input video has invalid metadata (FPS={fps}, "
@@ -67,15 +69,8 @@ def render_video(video_path: Path, model_path: Path, output_path: Path) -> int:
                 "Check the output path and OpenCV video codec support."
             )
 
-        options = mp.tasks.vision.PoseLandmarkerOptions(
-            base_options=mp.tasks.BaseOptions(model_asset_path=str(model_path)),
-            running_mode=mp.tasks.vision.RunningMode.VIDEO,
-            num_poses=1,
-        )
         try:
-            landmarker_context = mp.tasks.vision.PoseLandmarker.create_from_options(
-                options
-            )
+            landmarker_context = create_video_landmarker(mp, str(model_path))
         except (OSError, RuntimeError, ValueError) as exc:
             raise ValueError(
                 f"Could not initialize Pose Landmarker from model '{model_path}'. "
@@ -94,33 +89,23 @@ def render_video(video_path: Path, model_path: Path, output_path: Path) -> int:
         processed_frames = 0
         previous_timestamp_ms = -1
         with landmarker_context as landmarker:
-            while True:
-                success, frame_bgr = capture.read()
-                if not success:
-                    break
-
-                timestamp_ms = max(
-                    previous_timestamp_ms + 1,
-                    int(round(processed_frames * 1000.0 / fps)),
+            for frame_index, frame_bgr in iter_video_frames(capture):
+                timestamp_ms = frame_timestamp_ms(
+                    frame_index, fps, previous_timestamp_ms
                 )
                 previous_timestamp_ms = timestamp_ms
-
-                frame_rgb = np.ascontiguousarray(
-                    cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+                result = process_video_frame(
+                    frame_bgr, timestamp_ms, landmarker, cv2, mp, np
                 )
-                mp_image = mp.Image(
-                    image_format=mp.ImageFormat.SRGB,
-                    data=frame_rgb,
-                )
-                result = landmarker.detect_for_video(mp_image, timestamp_ms)
 
                 for pose_landmarks in result.pose_landmarks:
-                    drawing.draw_landmarks(
-                        image=frame_bgr,
-                        landmark_list=pose_landmarks,
-                        connections=pose_connections,
-                        landmark_drawing_spec=landmark_spec,
-                        connection_drawing_spec=connection_spec,
+                    draw_pose_landmarks(
+                        frame_bgr,
+                        pose_landmarks,
+                        pose_connections,
+                        drawing,
+                        landmark_spec,
+                        connection_spec,
                     )
 
                 # With no poses, this writes the original frame unchanged.
