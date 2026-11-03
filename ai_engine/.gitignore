@@ -1,6 +1,7 @@
 .venv/
 __pycache__/
 *.py[cod]
+*.egg-info/
 models/*.task
 # Generated experimental results
 experimental_outputs/
