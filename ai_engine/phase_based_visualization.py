@@ -17,13 +17,12 @@ from pathlib import Path
 from typing import Any
 
 try:
+    from .athletelens_ai.assessments.push_up import DetectorConfig, choose_elbow_angle
     from .phase_based_analysis import (
-        DetectorConfig,
         MeasurementSeries,
         rolling_median,
         run_signal,
     )
-    from .pushup_analysis import choose_elbow_angle
     from .athletelens_ai.pose import (
         create_video_landmarker,
         load_pose_dependencies,
@@ -32,8 +31,8 @@ try:
     from .athletelens_ai.video import frame_timestamp_ms, iter_video_frames, open_video
     from .athletelens_ai.visualization import draw_normalized_points
 except ImportError:
-    from phase_based_analysis import DetectorConfig, MeasurementSeries, rolling_median, run_signal
-    from pushup_analysis import choose_elbow_angle
+    from athletelens_ai.assessments.push_up import DetectorConfig, choose_elbow_angle
+    from phase_based_analysis import MeasurementSeries, rolling_median, run_signal
     from athletelens_ai.pose import (
         create_video_landmarker,
         load_pose_dependencies,

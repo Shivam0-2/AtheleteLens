@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import unittest
 
-from phase_based_analysis import DetectorConfig, PhaseBasedPushUpDetector
+from athletelens_ai.assessments.push_up import DetectorConfig, PhaseBasedPushUpDetector
 
 
 def feed(detector: PhaseBasedPushUpDetector, values: list[float | None], step_ms: int = 100):
@@ -33,6 +33,29 @@ def config(**overrides) -> DetectorConfig:
 
 
 class PhaseBasedDetectorTests(unittest.TestCase):
+    def test_phase_detector_default_thresholds_remain_90_and_160(self):
+        detector_config = DetectorConfig()
+        self.assertEqual(detector_config.bottom_angle_deg, 90.0)
+        self.assertEqual(detector_config.top_angle_deg, 160.0)
+
+    def test_invalid_threshold_configuration_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "bottom angle < top angle"):
+            DetectorConfig(bottom_angle_deg=160, top_angle_deg=90).validate()
+
+    def test_overlapping_hysteresis_bands_are_rejected(self):
+        with self.assertRaisesRegex(ValueError, "Hysteresis bands overlap"):
+            config(hysteresis_deg=40).validate()
+
+    def test_invalid_confirmation_and_duration_configuration_is_rejected(self):
+        for invalid in (
+            config(confirmation_frames=0),
+            config(min_repetition_duration_s=-0.1),
+            config(max_repetition_duration_s=0.1, min_repetition_duration_s=0.1),
+            config(max_measurement_gap_s=0),
+        ):
+            with self.subTest(config=invalid), self.assertRaises(ValueError):
+                invalid.validate()
+
     def test_complete_repetition(self):
         detector = feed(PhaseBasedPushUpDetector(config()), complete_rep())
         self.assertEqual(detector.repetitions, 1)

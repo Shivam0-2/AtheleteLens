@@ -12,9 +12,29 @@ import csv
 import json
 import math
 import sys
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+try:
+    from .athletelens_ai.assessments.push_up import (
+        JOINT_NAMES,
+        LANDMARK_FIELDS,
+        PushUpRepetitionCounter,
+        choose_elbow_angle,
+        elbow_angle_degrees,
+        landmark_row_fields,
+        side_measurement,
+    )
+except ImportError:
+    from athletelens_ai.assessments.push_up import (
+        JOINT_NAMES,
+        LANDMARK_FIELDS,
+        PushUpRepetitionCounter,
+        choose_elbow_angle,
+        elbow_angle_degrees,
+        landmark_row_fields,
+        side_measurement,
+    )
 
 try:
     from .athletelens_ai.pose import (
@@ -30,33 +50,6 @@ except ImportError:
         process_video_frame,
     )
     from athletelens_ai.video import frame_timestamp_ms, iter_video_frames, open_video
-
-
-JOINT_NAMES = ("shoulder", "elbow", "wrist")
-LANDMARK_FIELDS = ("x", "y", "z", "visibility", "presence")
-
-
-@dataclass
-class PushUpRepetitionCounter:
-    """Count a repetition after a lower-threshold then upper-threshold crossing."""
-
-    lower_angle_deg: float
-    upper_angle_deg: float
-    repetitions: int = 0
-    phase: str = "seeking_bottom"
-
-    def update(self, elbow_angle_deg: float | None) -> int:
-        """Update the state from one angle; missing angles do not change state."""
-        if elbow_angle_deg is None:
-            return self.repetitions
-        if self.phase == "seeking_bottom" and elbow_angle_deg <= self.lower_angle_deg:
-            self.phase = "bottom_reached"
-        elif self.phase == "bottom_reached" and elbow_angle_deg >= self.upper_angle_deg:
-            self.repetitions += 1
-            self.phase = "top_reached"
-        elif self.phase == "top_reached" and elbow_angle_deg <= self.lower_angle_deg:
-            self.phase = "bottom_reached"
-        return self.repetitions
 
 
 def parse_args() -> argparse.Namespace:
@@ -101,109 +94,6 @@ def parse_args() -> argparse.Namespace:
     if not 0 <= args.min_visibility <= 1:
         parser.error("--min-visibility must be between 0 and 1")
     return args
-
-
-def elbow_angle_degrees(shoulder: Any, elbow: Any, wrist: Any) -> float | None:
-    """Compute the 2D shoulder-elbow-wrist angle in degrees, or None if invalid."""
-    try:
-        shoulder_xy = (float(shoulder.x), float(shoulder.y))
-        elbow_xy = (float(elbow.x), float(elbow.y))
-        wrist_xy = (float(wrist.x), float(wrist.y))
-    except (AttributeError, TypeError, ValueError):
-        return None
-
-    upper_arm = (shoulder_xy[0] - elbow_xy[0], shoulder_xy[1] - elbow_xy[1])
-    forearm = (wrist_xy[0] - elbow_xy[0], wrist_xy[1] - elbow_xy[1])
-    upper_length = math.hypot(*upper_arm)
-    forearm_length = math.hypot(*forearm)
-    if upper_length == 0 or forearm_length == 0:
-        return None
-
-    cosine = (
-        upper_arm[0] * forearm[0] + upper_arm[1] * forearm[1]
-    ) / (upper_length * forearm_length)
-    return math.degrees(math.acos(max(-1.0, min(1.0, cosine))))
-
-
-def landmark_row_fields(prefix: str, landmark: Any | None) -> dict[str, float | str]:
-    """Return the supplied landmark fields for one joint, blank if unavailable."""
-    values: dict[str, float | str] = {}
-    for field in LANDMARK_FIELDS:
-        value = getattr(landmark, field, None) if landmark is not None else None
-        values[f"{prefix}_{field}"] = float(value) if value is not None else ""
-    return values
-
-
-def side_measurement(
-    landmarks: list[Any], side: str, min_visibility: float
-) -> tuple[float | None, dict[str, float | str], float | None]:
-    """Extract a side's shoulder/elbow/wrist and compute its visible angle."""
-    import mediapipe as mp
-
-    pose_landmark = mp.tasks.vision.PoseLandmark
-    indices = {
-        "shoulder": getattr(pose_landmark, f"{side.upper()}_SHOULDER").value,
-        "elbow": getattr(pose_landmark, f"{side.upper()}_ELBOW").value,
-        "wrist": getattr(pose_landmark, f"{side.upper()}_WRIST").value,
-    }
-    joints: dict[str, Any | None] = {
-        joint: landmarks[index] if index < len(landmarks) else None
-        for joint, index in indices.items()
-    }
-    fields: dict[str, float | str] = {}
-    for joint, landmark in joints.items():
-        fields.update(landmark_row_fields(f"{side}_{joint}", landmark))
-
-    confidences = [
-        float(landmark.visibility)
-        for landmark in joints.values()
-        if landmark is not None and getattr(landmark, "visibility", None) is not None
-    ]
-    visibility_score = min(confidences) if len(confidences) == len(JOINT_NAMES) else None
-    visibility_ok = all(
-        landmark is not None
-        and (
-            getattr(landmark, "visibility", None) is None
-            or float(landmark.visibility) >= min_visibility
-        )
-        for landmark in joints.values()
-    )
-    angle = (
-        elbow_angle_degrees(joints["shoulder"], joints["elbow"], joints["wrist"])
-        if visibility_ok
-        else None
-    )
-    return angle, fields, visibility_score
-
-
-def choose_elbow_angle(
-    landmarks: list[Any], min_visibility: float
-) -> tuple[float | None, str, float | None, float | None, dict[str, float | str]]:
-    """Choose the valid side with the strongest visibility; prefer left on ties."""
-    left_angle, left_fields, left_score = side_measurement(
-        landmarks, "left", min_visibility
-    )
-    right_angle, right_fields, right_score = side_measurement(
-        landmarks, "right", min_visibility
-    )
-    fields = {**left_fields, **right_fields}
-
-    candidates = [
-        ("left", left_angle, left_score),
-        ("right", right_angle, right_score),
-    ]
-    candidates = [candidate for candidate in candidates if candidate[1] is not None]
-    if not candidates:
-        return None, "", left_angle, right_angle, fields
-    # Scores are None only when the model did not supply visibility values.
-    side, angle, _ = max(
-        candidates,
-        key=lambda candidate: (
-            candidate[2] if candidate[2] is not None else -1.0,
-            candidate[0] == "left",
-        ),
-    )
-    return angle, side, left_angle, right_angle, fields
 
 
 def build_csv_columns() -> list[str]:
