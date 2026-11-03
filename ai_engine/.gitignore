@@ -2,3 +2,27 @@
 __pycache__/
 *.py[cod]
 models/*.task
+# Generated experimental results
+experimental_outputs/
+
+# Python environment and cache
+.venv/
+__pycache__/
+*.py[cod]
+
+# Large video and model files
+videos/*.mp4
+models/*.task
+# Generated experiment results
+experimental_outputs/
+videos/*.csv
+videos/*.json
+videos/*.mp4
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+
+# MediaPipe models
+models/*.task
