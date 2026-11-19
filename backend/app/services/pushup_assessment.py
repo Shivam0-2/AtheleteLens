@@ -16,13 +16,10 @@ from athletelens_ai.pose import (
     load_pose_dependencies,
     process_video_frame,
 )
+from athletelens_ai.pipeline import PoseVideoPipeline, VideoInputError
 from athletelens_ai.signals import rolling_median
-from athletelens_ai.video import (
-    VideoMetadata as EngineVideoMetadata,
-    frame_timestamp_ms,
-    iter_video_frames,
-    open_video,
-)
+from athletelens_ai.video import VideoMetadata as EngineVideoMetadata
+from athletelens_ai.video import open_video
 
 from app.schemas.assessment import (
     DetectorConfiguration,
@@ -90,58 +87,41 @@ def assess_pushup_video(
     except ValueError as exc:
         raise AssessmentProcessingError(f"Invalid detector configuration: {exc}") from exc
 
-    capture = None
     try:
-        cv2, mp, np = load_pose_dependencies()
         try:
-            capture, metadata = open_video(video_path, cv2)
-        except (OSError, ValueError) as exc:
-            raise InvalidVideoError("Uploaded file is not a readable video") from exc
-
-        if (
-            not math.isfinite(metadata.fps)
-            or metadata.fps <= 0
-            or metadata.width <= 0
-            or metadata.height <= 0
-        ):
-            raise InvalidVideoError("Video metadata is invalid")
-
-        timestamps: list[int] = []
-        raw_angles: list[float | None] = []
-        frames_with_poses = 0
-        previous_timestamp_ms = -1
-        try:
-            landmarker_context = create_video_landmarker(mp, str(model_path))
-            with landmarker_context as landmarker:
-                for frame_index, frame_bgr in iter_video_frames(capture):
-                    timestamp_ms = frame_timestamp_ms(
-                        frame_index, metadata.fps, previous_timestamp_ms
-                    )
-                    previous_timestamp_ms = timestamp_ms
-                    result = process_video_frame(
-                        frame_bgr, timestamp_ms, landmarker, cv2, mp, np
-                    )
-                    pose_landmarks = result.pose_landmarks or []
-                    if pose_landmarks:
+            pipeline = PoseVideoPipeline(
+                video_path,
+                model_path,
+                dependency_loader=load_pose_dependencies,
+                video_opener=open_video,
+                landmarker_factory=create_video_landmarker,
+                frame_processor=process_video_frame,
+            )
+            timestamps: list[int] = []
+            raw_angles: list[float | None] = []
+            frames_with_poses = 0
+            with pipeline:
+                metadata = pipeline.metadata
+                for observation in pipeline:
+                    if observation.pose_detected:
                         frames_with_poses += 1
                         angle, _side, _left, _right, _fields = choose_elbow_angle(
-                            pose_landmarks[0], MIN_LANDMARK_VISIBILITY
+                            observation.pose_landmarks[0], MIN_LANDMARK_VISIBILITY
                         )
                         if angle is not None and not math.isfinite(angle):
                             angle = None
                     else:
                         angle = None
-                    timestamps.append(timestamp_ms)
+                    timestamps.append(observation.timestamp_ms)
                     raw_angles.append(angle)
+        except VideoInputError as exc:
+            raise InvalidVideoError("Uploaded file is not a readable video") from exc
         except AssessmentServiceError:
             raise
         except Exception as exc:
             raise AssessmentProcessingError(
                 f"Pose processing failed ({type(exc).__name__})"
             ) from exc
-        finally:
-            capture.release()
-            capture = None
 
         if not timestamps:
             raise InvalidVideoError("Uploaded video contains no readable frames")
@@ -221,6 +201,3 @@ def assess_pushup_video(
         raise AssessmentProcessingError(
             f"Assessment failed ({type(exc).__name__})"
         ) from exc
-    finally:
-        if capture is not None:
-            capture.release()
