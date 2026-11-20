@@ -1,11 +1,13 @@
-import { ArrowLeft, CheckCircle2, Clock3, FileSearch, Gauge, Ruler, ScanLine } from 'lucide-react'
+import { ArrowLeft, BookOpen, CheckCircle2, Clock3, FileSearch, Gauge, Info, Ruler, ScanLine, Sparkles, Target, TrendingUp } from 'lucide-react'
 import { Link, useLocation, useParams } from 'react-router-dom'
+import type { ReactNode } from 'react'
 import { useDemoAuth } from '../auth/AuthContext'
 import { AttemptList } from '../components/AttemptList'
 import { QualitySummary } from '../components/QualitySummary'
 import { Warnings } from '../components/Warnings'
 import { getExercise } from '../data/exercises'
 import { getAssessment, readAssessments } from '../data/assessmentStore'
+import { generatePerformanceInsights } from '../insights/performanceInsights'
 import type { AssessmentResponse } from '../types'
 
 interface ResultsLocationState { response?: AssessmentResponse; exerciseKey?: string; recordId?: string; persistenceUnavailable?: boolean }
@@ -51,6 +53,7 @@ export function ResultsPage() {
   </div>
 
   const exerciseKeyForType: Record<string, string> = { push_up: 'pushups', curl_up: 'curlups', vertical_jump: 'vertical-jumps', standing_broad_jump: 'broad-jumps' }
+  const insights = generatePerformanceInsights(response)
   const exercise = getExercise(state?.exerciseKey ?? exerciseKeyForType[response.exercise_type])
   const summary = response.exercise_type === 'push_up' ? response.measurement_summary ?? {} : response.measurement_summary
   const calibration = record(summary.calibration)
@@ -92,6 +95,18 @@ export function ResultsPage() {
       {isBroad && <Metric label="Physical distance" value={response.physical_distance_available && typeof calibratedBroadAttempt?.distance_cm === 'number' ? calibratedBroadAttempt.distance_cm.toFixed(1) : 'Unavailable'} suffix={response.physical_distance_available && typeof calibratedBroadAttempt?.distance_cm === 'number' ? ' cm' : ''} detail={response.physical_distance_available ? `${response.physical_distance_attempt_count ?? 0} attempts with calibration` : 'Distance requires valid calibration'} />}
     </section>
 
+    <section className="performance-insights" aria-labelledby="performance-insights-heading">
+      <div className="insights-heading"><div><span className="eyebrow">EXPLAINABLE SUMMARY</span><h3 id="performance-insights-heading">Performance insights</h3><p>Exercise-specific observations derived only from fields in this assessment response. These are not validated grades.</p></div><Sparkles size={19} /></div>
+      <div className="insight-grid">
+        <InsightGroup icon={<TrendingUp size={16} />} title="What went well" items={insights.strengths} empty="No positive movement observation can be made from the available fields." />
+        <InsightGroup icon={<Info size={16} />} title="Areas to improve" items={insights.improvementAreas} empty="No specific improvement area was identified from this response." />
+        <InsightGroup icon={<Target size={16} />} title="Recommended training focus" items={insights.trainingFocus} empty="No training focus is available." />
+        <InsightGroup icon={<BookOpen size={16} />} title="Measurement explanations" items={insights.explanations} empty="No exercise-specific measurement was reported." />
+      </div>
+      <InsightGroup icon={<Info size={16} />} title="Assessment limitations" items={insights.limitations} empty="No additional limitation text was returned." wide />
+      <p className="insight-evidence-note">Each observation lists its source response fields. Tracking quality describes measurement availability and is separate from athletic performance.</p>
+    </section>
+
     <div className="result-columns"><section className="content-panel"><div className="panel-heading"><div><span className="eyebrow">MOVEMENT EVENTS</span><h3>Accepted and rejected</h3></div><Clock3 size={17} /></div><AttemptList accepted={accepted} rejected={rejected} exerciseType={response.exercise_type} /></section>
       <section className="content-panel"><div className="panel-heading"><div><span className="eyebrow">TRACKING QUALITY</span><h3>Frame coverage</h3></div><Gauge size={17} /></div><QualitySummary response={response} />
         {response.measurement_quality && <details className="technical-details"><summary>Measurement quality details</summary><pre>{JSON.stringify(response.measurement_quality, null, 2)}</pre></details>}
@@ -106,4 +121,20 @@ export function ResultsPage() {
     <Warnings items={response.warnings ?? []} />
     <details className="technical-details"><summary>View complete API response</summary><pre>{JSON.stringify(response, null, 2)}</pre></details>
   </div>
+}
+
+function InsightGroup({ icon, title, items, empty, wide = false }: {
+  icon: ReactNode
+  title: string
+  items: Array<{ title: string; detail: string; evidenceFields: string[] }>
+  empty: string
+  wide?: boolean
+}) {
+  return <section className={`insight-group${wide ? ' insight-group-wide' : ''}`}>
+    <div className="insight-group-title">{icon}<h4>{title}</h4></div>
+    {items.length === 0 ? <p className="insight-empty">{empty}</p> : <div className="insight-items">{items.map((entry, index) => <article className="insight-item" key={`${entry.title}-${index}`}>
+      <strong>{entry.title}</strong><p>{entry.detail}</p>
+      <small>Response fields: {entry.evidenceFields.join(', ')}</small>
+    </article>)}</div>}
+  </section>
 }

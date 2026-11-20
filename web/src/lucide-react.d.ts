@@ -13,6 +13,7 @@ declare module 'lucide-react' {
   export const ArrowUpRight: LucideIcon
   export const Beaker: LucideIcon
   export const Bell: LucideIcon
+  export const BookOpen: LucideIcon
   export const Braces: LucideIcon
   export const Camera: LucideIcon
   export const Check: LucideIcon
@@ -28,6 +29,7 @@ declare module 'lucide-react' {
   export const FileClock: LucideIcon
   export const FileVideo2: LucideIcon
   export const Gauge: LucideIcon
+  export const Info: LucideIcon
   export const LayoutDashboard: LucideIcon
   export const ListChecks: LucideIcon
   export const LockKeyhole: LucideIcon
@@ -40,6 +42,8 @@ declare module 'lucide-react' {
   export const Settings2: LucideIcon
   export const ShieldCheck: LucideIcon
   export const Sparkles: LucideIcon
+  export const Target: LucideIcon
+  export const TrendingUp: LucideIcon
   export const UploadCloud: LucideIcon
   export const Video: LucideIcon
   export const X: LucideIcon
