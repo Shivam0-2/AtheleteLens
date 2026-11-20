@@ -28,26 +28,16 @@ from app.schemas.assessment import (
     RepetitionTimestamp,
     VideoMetadata,
 )
+from app.services.errors import (
+    AssessmentProcessingError,
+    AssessmentServiceError,
+    InvalidVideoError,
+    MissingPoseModelError,
+)
 
 
 MIN_LANDMARK_VISIBILITY = 0.5
 SMOOTHING_WINDOW_FRAMES = 7
-
-
-class AssessmentServiceError(Exception):
-    """Base error for failures that can be reported by the upload endpoint."""
-
-
-class InvalidVideoError(AssessmentServiceError):
-    """The submitted path does not contain a readable video stream."""
-
-
-class MissingPoseModelError(AssessmentServiceError):
-    """The configured MediaPipe task model is unavailable."""
-
-
-class AssessmentProcessingError(AssessmentServiceError):
-    """Pose inference or measurement processing failed."""
 
 
 def _optional_int(value: Any) -> int | None:
@@ -159,6 +149,9 @@ def assess_pushup_video(
         ]
         valid_angles = [angle for angle in raw_angles if angle is not None]
         frames_processed = len(timestamps)
+        accepted_payload = [item.model_dump() for item in accepted]
+        rejected_payload = [item.model_dump() for item in rejected]
+        measurement_coverage = round(len(valid_angles) * 100.0 / frames_processed, 2)
         return PushUpAssessmentResponse(
             input_filename=input_filename,
             video=VideoMetadata(
@@ -167,6 +160,32 @@ def assess_pushup_video(
             total_frames_processed=frames_processed,
             frames_with_detected_poses=frames_with_poses,
             frames_with_valid_elbow_angle=len(valid_angles),
+            exercise_type="push_up",
+            processing_status="completed",
+            measurement_coverage_percentage=measurement_coverage,
+            measurement_quality={
+                "valid_measurement_frames": len(valid_angles),
+                "frames_missing_measurements": frames_processed - len(valid_angles),
+                "measurement_coverage_percentage": measurement_coverage,
+                "mean_landmark_visibility": None,
+                "missing_landmark_counts": {},
+                "confidence_is_probability": False,
+            },
+            accepted_attempt_count=len(accepted),
+            accepted_attempts=accepted_payload,
+            rejected_attempt_count=len(rejected),
+            rejected_attempts=rejected_payload,
+            measurement_summary={
+                "average_elbow_angle_degrees": round(sum(valid_angles) / len(valid_angles), 3) if valid_angles else None,
+                "minimum_elbow_angle_degrees": round(min(valid_angles), 3) if valid_angles else None,
+                "maximum_elbow_angle_degrees": round(max(valid_angles), 3) if valid_angles else None,
+            },
+            annotated_video_available=False,
+            annotated_video_path=None,
+            warnings=[
+                "Experimental computer-vision output; not scientifically validated.",
+                "This endpoint does not generate or persist an annotated video.",
+            ],
             pose_detection_percentage=round(
                 frames_with_poses * 100.0 / frames_processed, 2
             ),
