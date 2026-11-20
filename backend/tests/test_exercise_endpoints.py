@@ -11,6 +11,7 @@ from unittest.mock import patch
 
 from athletelens_ai.video import VideoMetadata as EngineVideoMetadata
 from fastapi import HTTPException
+from pydantic import ValidationError
 from starlette.datastructures import UploadFile
 
 from app.api.v1 import router as api_v1
@@ -141,6 +142,35 @@ class ExerciseAssessmentEndpointTests(unittest.TestCase):
             )
         self.assertEqual(raised.exception.status_code, 422)
         self.assertTrue(video.file.closed)
+
+    def test_broad_jump_calibration_contract_accepts_complete_reference_and_omission(self):
+        from app.schemas.assessment_requests import BroadJumpRequestConfig
+
+        omitted = BroadJumpRequestConfig()
+        self.assertIsNone(omitted.reference_length_m)
+        supplied = BroadJumpRequestConfig.model_validate_json(json.dumps({
+            "reference_endpoint_a_x_px": 80,
+            "reference_endpoint_a_y_px": 320,
+            "reference_endpoint_b_x_px": 280,
+            "reference_endpoint_b_y_px": 320,
+            "reference_length_m": 2.0,
+        }))
+        self.assertEqual(supplied.reference_length_m, 2.0)
+
+    def test_broad_jump_request_rejects_invalid_reference_geometry_and_length(self):
+        from app.schemas.assessment_requests import BroadJumpRequestConfig
+
+        invalid = (
+            {"reference_endpoint_a_x_px": 80, "reference_endpoint_a_y_px": 320,
+             "reference_endpoint_b_x_px": 80.5, "reference_endpoint_b_y_px": 320,
+             "reference_length_m": 0.001},
+            {"reference_endpoint_a_x_px": 80, "reference_endpoint_a_y_px": 320,
+             "reference_endpoint_b_x_px": 280, "reference_endpoint_b_y_px": 320,
+             "reference_length_m": 0},
+        )
+        for payload in invalid:
+            with self.subTest(payload=payload), self.assertRaises(ValidationError):
+                BroadJumpRequestConfig.model_validate(payload)
 
     def test_openapi_documents_all_four_upload_endpoints(self):
         paths = app.openapi()["paths"]

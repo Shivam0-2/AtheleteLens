@@ -105,6 +105,17 @@ class BroadJumpRequestConfig(_RequestConfig):
             value is not None for value in calibration_fields
         ):
             raise ValueError("All four reference endpoint coordinates and reference_length_m are required together")
+        if self.reference_length_m is not None:
+            # Validate values that do not depend on the uploaded video's frame
+            # dimensions. Bounds, horizontal alignment, and scale are checked
+            # later by the same calibration object used by the assessment.
+            from athletelens_ai.assessments.calibration import GroundReferenceCalibration
+
+            GroundReferenceCalibration(
+                endpoint_a_px=(self.reference_endpoint_a_x_px, self.reference_endpoint_a_y_px),
+                endpoint_b_px=(self.reference_endpoint_b_x_px, self.reference_endpoint_b_y_px),
+                known_length_m=self.reference_length_m,
+            ).validate_values()
         from athletelens_ai.assessments.broad_jump import BroadJumpConfig
 
         detector_values = self.model_dump(exclude={
