@@ -28,6 +28,7 @@ class GroundReferenceCalibration:
     min_pixels_per_meter: float = 10.0
     max_pixels_per_meter: float = 100_000.0
     max_axis_deviation_deg: float = 15.0
+    min_reference_pixel_length_px: float = 2.0
 
     def validate_values(self) -> None:
         for name, point in (("endpoint_a_px", self.endpoint_a_px), ("endpoint_b_px", self.endpoint_b_px)):
@@ -61,6 +62,20 @@ class GroundReferenceCalibration:
             valid_axis_limit = False
         if not valid_axis_limit:
             raise CalibrationError("max_axis_deviation_deg must be in [0, 90]")
+        try:
+            min_reference_length = float(self.min_reference_pixel_length_px)
+            valid_reference_length = math.isfinite(min_reference_length) and min_reference_length > 0
+        except (TypeError, ValueError):
+            valid_reference_length = False
+        if not valid_reference_length:
+            raise CalibrationError("min_reference_pixel_length_px must be positive and finite")
+
+        # Reject near-coincident clicks even if a tiny declared reference length
+        # would otherwise make their calculated pixels-per-meter look plausible.
+        ax, ay = (float(value) for value in self.endpoint_a_px)
+        bx, by = (float(value) for value in self.endpoint_b_px)
+        if math.hypot(bx - ax, by - ay) < float(self.min_reference_pixel_length_px):
+            raise CalibrationError("Reference endpoints are too close for reliable calibration")
 
     def calibrate(self, image_width: int, image_height: int) -> "GroundCalibrationResult":
         """Validate frame coordinates and return the local pixels-per-meter scale."""
@@ -74,8 +89,6 @@ class GroundReferenceCalibration:
                 raise CalibrationError(f"{label} lies outside the video frame")
         dx, dy = bx - ax, by - ay
         pixel_length = math.hypot(dx, dy)
-        if pixel_length <= 0:
-            raise CalibrationError("Reference endpoints must be distinct")
         deviation = math.degrees(math.atan2(abs(dy), abs(dx)))
         if deviation > float(self.max_axis_deviation_deg):
             raise CalibrationError("Reference must align with the image horizontal travel axis")

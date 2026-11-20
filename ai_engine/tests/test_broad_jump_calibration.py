@@ -38,6 +38,9 @@ class GroundReferenceCalibrationTests(unittest.TestCase):
         invalid_cases = (
             GroundReferenceCalibration((-1, 20), (200, 20), 1.0),
             GroundReferenceCalibration((10, 20), (10, 20), 1.0),
+            # Tiny endpoints must fail even when the declared length would
+            # produce a plausible scale.
+            GroundReferenceCalibration((10, 20), (11, 20), 0.01),
             GroundReferenceCalibration((10, 20), (20, 200), 1.0),  # direction misaligned
             GroundReferenceCalibration((10, 20), (11, 20), 1.0),  # implausibly low scale
             GroundReferenceCalibration((10, 20), (210, 20), 1.0, max_pixels_per_meter=100.0),  # implausibly high scale
@@ -85,6 +88,22 @@ class GroundReferenceCalibrationTests(unittest.TestCase):
         self.assertEqual(result.summary["measurements"][-1]["physical_distance_cm"], 100.0)
         self.assertEqual(result.summary["calibration"]["source"], "image_ground_reference")
         self.assertTrue(result.summary["physical_distance_available"])
+
+    def test_reference_endpoint_minimum_separation_is_configurable(self):
+        calibration = GroundReferenceCalibration(
+            (10, 20), (12, 20), 0.02, min_reference_pixel_length_px=3.0
+        )
+        with self.assertRaisesRegex(CalibrationError, "too close"):
+            calibration.validate_values()
+
+    def test_calibration_rejects_out_of_frame_and_invalid_scale_limits(self):
+        with self.assertRaisesRegex(CalibrationError, "outside the video frame"):
+            GroundReferenceCalibration((10, 20), (210, 20), 2).calibrate(200, 100)
+        with self.assertRaises(CalibrationError):
+            GroundReferenceCalibration(
+                (10, 20), (210, 20), 2, min_pixels_per_meter=200,
+                max_pixels_per_meter=100,
+            ).validate_values()
 
     def test_config_rejects_multiple_calibration_sources(self):
         with self.assertRaises(ValueError):
