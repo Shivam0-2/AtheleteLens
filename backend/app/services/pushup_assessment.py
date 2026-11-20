@@ -28,6 +28,8 @@ from app.schemas.assessment import (
     RepetitionTimestamp,
     VideoMetadata,
 )
+from app.core.config import get_settings
+from app.services.annotated_video import build_annotation_lines, create_annotated_video
 from app.services.errors import (
     AssessmentProcessingError,
     AssessmentServiceError,
@@ -89,10 +91,15 @@ def assess_pushup_video(
             )
             timestamps: list[int] = []
             raw_angles: list[float | None] = []
+            pose_frames: list[list[dict[str, Any]]] = []
             frames_with_poses = 0
             with pipeline:
                 metadata = pipeline.metadata
                 for observation in pipeline:
+                    pose_frames.append(
+                        observation.pose_landmark_data[0]
+                        if observation.pose_landmark_data else []
+                    )
                     if observation.pose_detected:
                         frames_with_poses += 1
                         angle, _side, _left, _right, _fields = choose_elbow_angle(
@@ -118,10 +125,13 @@ def assess_pushup_video(
 
         smoothed_angles = rolling_median(raw_angles, SMOOTHING_WINDOW_FRAMES)
         detector = PhaseBasedPushUpDetector(config)
+        detector_rows: list[dict[str, Any]] = []
         for index, (timestamp_ms, angle) in enumerate(
             zip(timestamps, smoothed_angles), start=1
         ):
-            detector.update(index, timestamp_ms, angle)
+            frame_row = detector.update(index, timestamp_ms, angle)
+            frame_row["frame_number"] = index - 1
+            detector_rows.append(frame_row)
         frame_interval_ms = (
             timestamps[-1] - timestamps[-2] if len(timestamps) > 1 else 0
         )
@@ -152,6 +162,17 @@ def assess_pushup_video(
         accepted_payload = [item.model_dump() for item in accepted]
         rejected_payload = [item.model_dump() for item in rejected]
         measurement_coverage = round(len(valid_angles) * 100.0 / frames_processed, 2)
+        annotation_url = None
+        annotation_warnings: list[str] = []
+        try:
+            _, annotation_url = create_annotated_video(
+                video_path, get_settings().annotated_video_dir, pose_frames,
+                build_annotation_lines("push_up", detector_rows, list(detector.events), timestamps),
+                expected_width=metadata.width, expected_height=metadata.height,
+                expected_fps=metadata.fps,
+            )
+        except Exception as exc:
+            annotation_warnings.append(f"Annotated video is unavailable ({type(exc).__name__}).")
         return PushUpAssessmentResponse(
             input_filename=input_filename,
             video=VideoMetadata(
@@ -180,11 +201,12 @@ def assess_pushup_video(
                 "minimum_elbow_angle_degrees": round(min(valid_angles), 3) if valid_angles else None,
                 "maximum_elbow_angle_degrees": round(max(valid_angles), 3) if valid_angles else None,
             },
-            annotated_video_available=False,
+            annotated_video_available=annotation_url is not None,
+            annotated_video_url=annotation_url,
             annotated_video_path=None,
             warnings=[
                 "Experimental computer-vision output; not scientifically validated.",
-                "This endpoint does not generate or persist an annotated video.",
+                *annotation_warnings,
             ],
             pose_detection_percentage=round(
                 frames_with_poses * 100.0 / frames_processed, 2

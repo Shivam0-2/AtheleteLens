@@ -12,6 +12,7 @@ DEFAULT_POSE_MODEL_PATH = (
     REPOSITORY_ROOT / "ai_engine" / "models" / "pose_landmarker_lite.task"
 )
 DEFAULT_MAX_UPLOAD_SIZE_BYTES = 100 * 1024 * 1024
+DEFAULT_ANNOTATED_VIDEO_DIR = REPOSITORY_ROOT / "backend" / "storage" / "annotated_videos"
 
 
 @dataclass(frozen=True)
@@ -20,6 +21,7 @@ class Settings:
 
     pose_model_path: Path
     max_upload_size_bytes: int
+    annotated_video_dir: Path = DEFAULT_ANNOTATED_VIDEO_DIR
 
 
 def get_settings() -> Settings:
@@ -38,4 +40,7 @@ def get_settings() -> Settings:
         ) from exc
     if max_upload_size < 1:
         raise ValueError("ATHLETELENS_MAX_UPLOAD_SIZE_BYTES must be a positive integer")
-    return Settings(model_path, max_upload_size)
+    output_dir = Path(os.getenv(
+        "ATHLETELENS_ANNOTATED_VIDEO_DIR", str(DEFAULT_ANNOTATED_VIDEO_DIR)
+    )).expanduser()
+    return Settings(model_path, max_upload_size, output_dir)

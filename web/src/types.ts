@@ -39,6 +39,7 @@ export interface BaseAssessmentResponse {
   physical_distance_available?: boolean | null
   detector_configuration?: Record<string, unknown>
   annotated_video_available?: boolean
+  annotated_video_url?: string | null
   annotated_video_path?: string | null
   warnings?: string[]
 }

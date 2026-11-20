@@ -32,3 +32,5 @@ The frontend includes client-only demo role access; it is not production authent
 | Administrator | `admin@demo.athletelens` | `admin-demo` |
 
 The demo role session and actual assessment API responses are stored in this browser's local storage. The administrator diagnostics page can inspect only responses saved in that browser. No credentials, videos, users, or assessments are stored by the backend, and clearing browser storage removes the local demo session and history. Registration remains unavailable.
+
+Assessment MP4 visualizations are written to `backend/storage/annotated_videos/` by default and are ignored by Git. Set `ATHLETELENS_ANNOTATED_VIDEO_DIR` to choose another local output directory. The API returns a generated-video URL only after export and full decode verification; the original uploaded video remains temporary and is removed after processing.

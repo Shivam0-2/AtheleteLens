@@ -7,6 +7,7 @@ import tempfile
 from collections.abc import Callable
 from pathlib import Path
 from typing import Annotated, Any
+import re
 
 from athletelens_ai.assessments.broad_jump import BroadJumpAssessment, BroadJumpConfig
 from athletelens_ai.assessments.calibration import GroundReferenceCalibration
@@ -14,6 +15,7 @@ from athletelens_ai.assessments.curl_up import CurlUpAssessment, CurlUpConfig
 from athletelens_ai.assessments.vertical_jump import VerticalJumpAssessment, VerticalJumpConfig
 from athletelens_ai.video import VideoMetadata as EngineVideoMetadata
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, ValidationError
 
 from app.core.config import get_settings
@@ -34,6 +36,7 @@ from app.services.pushup_assessment import assess_pushup_video
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+ANNOTATED_VIDEO_ID_PATTERN = re.compile(r"^[a-f0-9]{32}$")
 SUPPORTED_VIDEO_SUFFIXES = {".avi", ".m4v", ".mkv", ".mov", ".mp4", ".webm"}
 UPLOAD_CHUNK_SIZE = 1024 * 1024
 UploadProcessor = Callable[[Path, Path, str], Any]
@@ -146,6 +149,31 @@ def _handle_video_upload(video: UploadFile, processor: UploadProcessor) -> Any:
                 logger.warning("Could not remove temporary upload %s", temporary_path)
 
 
+@router.get(
+    "/assessments/annotated-videos/{video_id}",
+    tags=["assessments"],
+    summary="Retrieve a generated annotated assessment video",
+)
+def get_annotated_video(video_id: str) -> FileResponse:
+    """Serve only generated UUID-named MP4s from the configured output folder."""
+    if not ANNOTATED_VIDEO_ID_PATTERN.fullmatch(video_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Annotated video not found")
+    try:
+        root = get_settings().annotated_video_dir.expanduser().resolve()
+    except (OSError, ValueError) as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Annotated video not found") from exc
+    candidate = (root / f"{video_id}.mp4").resolve()
+    if candidate.parent != root or not candidate.is_file():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Annotated video not found")
+    return FileResponse(
+        candidate,
+        media_type="video/mp4",
+        filename=f"athletelens-{video_id}.mp4",
+        content_disposition_type="inline",
+        headers={"Cache-Control": "private, max-age=0"},
+    )
+
+
 @router.get("/health", tags=["health"])
 async def versioned_health_check() -> dict[str, str]:
     """Report that the version 1 API router is responding."""
@@ -172,7 +200,7 @@ def create_pushup_assessment(
 
         detector_config = DetectorConfig(**options.model_dump())
         processor = lambda path, model, filename: assess_pushup_video(
-            path, model, filename, detector_config=detector_config
+            path, model, filename, detector_config=detector_config,
         )
     return _handle_video_upload(video, processor)
 

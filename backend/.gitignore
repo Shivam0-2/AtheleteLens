@@ -1,0 +1,2 @@
+storage/annotated_videos/*
+!storage/annotated_videos/.gitkeep

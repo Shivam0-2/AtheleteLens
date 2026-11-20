@@ -79,4 +79,5 @@ button { color: inherit; }
 .insight-item p, .insight-empty { margin: 5px 0 0; color: #93a7bc; font-size: 9px; line-height: 1.55; }
 .insight-item small { display: block; margin-top: 7px; color: #6e849b; font-size: 7px; line-height: 1.5; overflow-wrap: anywhere; }
 .insight-evidence-note { margin: 0; color: #788da3; font-size: 8px; line-height: 1.5; }
+.annotated-video-panel { display: grid; gap: 11px; }.annotated-video-player { display: block; width: min(100%, 900px); max-height: 70vh; margin: 0 auto; background: #050a10; border: 1px solid #2c4058; border-radius: 9px; }.annotated-video-caption { margin: 0; color: #8196ac; font-size: 9px; line-height: 1.5; }
 @media (max-width: 560px) { .performance-insights { padding: 12px; }.insight-grid { grid-template-columns: 1fr; }.insight-group { padding: 10px; } }

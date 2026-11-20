@@ -1,4 +1,4 @@
-import { ArrowLeft, BookOpen, CheckCircle2, Clock3, FileSearch, Gauge, Info, Ruler, ScanLine, Sparkles, Target, TrendingUp } from 'lucide-react'
+import { ArrowLeft, BookOpen, CheckCircle2, Clock3, FileSearch, FileVideo2, Gauge, Info, Ruler, ScanLine, Sparkles, Target, TrendingUp } from 'lucide-react'
 import { Link, useLocation, useParams } from 'react-router-dom'
 import type { ReactNode } from 'react'
 import { useDemoAuth } from '../auth/AuthContext'
@@ -8,6 +8,7 @@ import { Warnings } from '../components/Warnings'
 import { getExercise } from '../data/exercises'
 import { getAssessment, readAssessments } from '../data/assessmentStore'
 import { generatePerformanceInsights } from '../insights/performanceInsights'
+import { resolveApiUrl } from '../api/config'
 import type { AssessmentResponse } from '../types'
 
 interface ResultsLocationState { response?: AssessmentResponse; exerciseKey?: string; recordId?: string; persistenceUnavailable?: boolean }
@@ -112,12 +113,17 @@ export function ResultsPage() {
         {response.measurement_quality && <details className="technical-details"><summary>Measurement quality details</summary><pre>{JSON.stringify(response.measurement_quality, null, 2)}</pre></details>}
       </section></div>
 
+    <section className="content-panel annotated-video-panel"><div className="panel-heading"><div><span className="eyebrow">FRAME-BY-FRAME VISUALIZATION</span><h3>Annotated video</h3></div><FileVideo2 size={17} /></div>
+      {response.annotated_video_available && response.annotated_video_url
+        ? <><video className="annotated-video-player" controls playsInline preload="metadata" aria-label={`${exercise?.name ?? 'Assessment'} annotated video`}><source src={resolveApiUrl(response.annotated_video_url)} type="video/mp4" />Your browser does not support MP4 playback.</video><p className="annotated-video-caption">Pose overlays and event labels are generated from this assessment’s measured landmarks and detector events.</p></>
+        : <div className="inline-note"><FileSearch size={15} /><span>Annotated video unavailable for this response. No video is presented unless the server generated and verified an output file.</span></div>}
+    </section>
+
     {isBroad && calibration && <section className="content-panel calibration-result"><div className="panel-heading"><div><span className="eyebrow">GROUND REFERENCE</span><h3>Calibration</h3></div><Ruler size={17} /></div><div className="calibration-status-row"><span className={`status-tag ${calibration.status === 'valid' ? 'status-config' : ''}`}>{formatted(calibration.status)}</span><span>{calibration.physical_distance_available ? 'Physical distance available' : 'Physical distance unavailable'}</span></div><p>{formatted(calibration.explanation)}</p><dl>{[['Scale', calibration.pixels_per_meter == null ? null : `${formatted(calibration.pixels_per_meter)} px/m`], ['Reference length', calibration.reference_length_m == null ? null : `${formatted(calibration.reference_length_m)} m`], ['Scope', calibration.assumptions]].map(([label, value]) => <div key={String(label)}><dt>{String(label)}</dt><dd>{formatted(value)}</dd></div>)}</dl></section>}
 
     {summaryFields.length > 0 && <section className="content-panel"><div className="panel-heading"><div><span className="eyebrow">EXERCISE MEASUREMENTS</span><h3>Reported summary</h3></div></div><div className="summary-value-grid">{summaryFields.map(([key, value]) => <div key={key}><span>{prettyLabel(key)}</span><strong>{formatted(value)}{key.endsWith('_deg') || key.endsWith('_angle_deg') ? '°' : key.endsWith('_cm') ? ' cm' : key.endsWith('_m') ? ' m' : ''}</strong></div>)}</div></section>}
 
     {isVertical && <div className="method-note"><strong>Flight-time height estimate</strong><p>Reported height uses flight time and assumes equal center-of-mass height at takeoff and confirmed landing. Foot/ankle landmark contact timestamps are video proxies, not force-plate measurements.</p></div>}
-    {!response.annotated_video_available && <div className="inline-note"><FileSearch size={15} /><span>The API did not generate an annotated video for this assessment.</span></div>}
     <Warnings items={response.warnings ?? []} />
     <details className="technical-details"><summary>View complete API response</summary><pre>{JSON.stringify(response, null, 2)}</pre></details>
   </div>

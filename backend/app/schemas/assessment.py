@@ -80,10 +80,11 @@ class PushUpAssessmentResponse(BaseModel):
     rejected_attempts: list[dict[str, Any]] = Field(default_factory=list)
     measurement_summary: dict[str, Any] = Field(default_factory=dict)
     annotated_video_available: bool = False
+    annotated_video_url: str | None = None
     annotated_video_path: str | None = None
     warnings: list[str] = Field(default_factory=lambda: [
         "Experimental computer-vision output; not scientifically validated.",
-        "This endpoint does not generate or persist an annotated video.",
+        "Annotated video is generated locally when processing succeeds.",
     ])
 
 
@@ -113,5 +114,6 @@ class ExerciseAssessmentResponse(BaseModel):
     physical_distance_available: bool | None = None
     detector_configuration: dict[str, Any]
     annotated_video_available: bool
+    annotated_video_url: str | None = None
     annotated_video_path: str | None
     warnings: list[str]

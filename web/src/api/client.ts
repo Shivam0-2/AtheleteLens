@@ -59,6 +59,7 @@ export function isAssessmentResponse(value: unknown): value is AssessmentRespons
     && isRecord(value.detector_configuration)
     && typeof value.annotated_video_available === 'boolean'
     && (typeof value.annotated_video_path === 'string' || value.annotated_video_path === null)
+      && (value.annotated_video_url === undefined || typeof value.annotated_video_url === 'string' || value.annotated_video_url === null)
 }
 
 function describeErrorDetail(detail: unknown): string | null {

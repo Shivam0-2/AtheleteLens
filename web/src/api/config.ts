@@ -3,6 +3,17 @@ const configuredBaseUrl = import.meta.env.VITE_API_BASE_URL?.trim()
 /** Shared API origin/prefix. Defaults to Vite's same-origin /api proxy. */
 export const API_BASE_URL = configuredBaseUrl || '/api'
 
+/** Resolve API-returned root-relative media URLs against the configured API origin. */
+export function resolveApiUrl(path: string): string {
+  if (/^https?:\/\//i.test(path)) return path
+  if (API_BASE_URL.startsWith('/')) return path
+  try {
+    return new URL(path, API_BASE_URL).toString()
+  } catch {
+    return path
+  }
+}
+
 export const API_ENDPOINTS = {
   health: `${API_BASE_URL}/v1/health`,
   assessments: {

@@ -11,6 +11,8 @@ from athletelens_ai.assessments.base import AssessmentProtocol
 from athletelens_ai.pipeline import PoseVideoPipeline, VideoInputError
 
 from app.schemas.assessment import ExerciseAssessmentResponse, VideoMetadata
+from app.core.config import get_settings
+from app.services.annotated_video import build_annotation_lines, create_annotated_video
 from app.services.errors import (
     AssessmentProcessingError,
     InvalidVideoError,
@@ -43,6 +45,7 @@ def assess_protocol_video(
 
     observations = []
     measurements = []
+    pose_frames: list[list[dict[str, Any]]] = []
     pose_count = 0
     assessment: AssessmentProtocol | None = None
     try:
@@ -53,6 +56,10 @@ def assess_protocol_video(
             assessment = assessment_factory(metadata)
             for observation in pipeline:
                 observations.append(observation)
+                pose_frames.append(
+                    observation.pose_landmark_data[0]
+                    if observation.pose_landmark_data else []
+                )
                 pose_count += int(observation.pose_detected)
                 measurements.append(assessment.measure_frame(observation))
         if not observations:
@@ -94,7 +101,7 @@ def assess_protocol_video(
 
     warnings = [
         "Experimental computer-vision output; not scientifically validated.",
-        "This endpoint does not generate or persist an annotated video.",
+        "Annotated video is generated locally when processing succeeds.",
     ]
     protocol_gaps = summary.get("protocol_gaps")
     if isinstance(protocol_gaps, list):
@@ -111,6 +118,21 @@ def assess_protocol_video(
     measurement_summary = {
         key: value for key, value in summary.items() if key not in excluded_summary_fields
     }
+    annotation_url = None
+    try:
+        _, annotation_url = create_annotated_video(
+            video_path, get_settings().annotated_video_dir, pose_frames,
+            build_annotation_lines(
+                result.assessment_type,
+                summary.get("measurements", []),
+                events,
+                [observation.timestamp_ms for observation in observations],
+            ),
+            expected_width=metadata.width, expected_height=metadata.height,
+            expected_fps=metadata.fps,
+        )
+    except Exception as exc:
+        warnings.append(f"Annotated video is unavailable ({type(exc).__name__}).")
     return ExerciseAssessmentResponse(
         exercise_type=result.assessment_type,
         processing_status="completed",
@@ -137,7 +159,8 @@ def assess_protocol_video(
         physical_distance_attempt_count=summary.get("physical_distance_attempt_count"),
         physical_distance_available=summary.get("physical_distance_available"),
         detector_configuration=dict(result.configuration),
-        annotated_video_available=False,
+        annotated_video_available=annotation_url is not None,
+        annotated_video_url=annotation_url,
         annotated_video_path=None,
         warnings=warnings,
     )
