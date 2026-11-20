@@ -1,7 +1,8 @@
 import { ArrowLeft, BookOpen, CheckCircle2, Clock3, FileSearch, FileVideo2, Gauge, Info, Ruler, ScanLine, Sparkles, Target, TrendingUp } from 'lucide-react'
 import { Link, useLocation, useParams } from 'react-router-dom'
-import type { ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { useDemoAuth } from '../auth/AuthContext'
+import { getAssessmentRecord } from '../api/client'
 import { AttemptList } from '../components/AttemptList'
 import { QualitySummary } from '../components/QualitySummary'
 import { Warnings } from '../components/Warnings'
@@ -9,7 +10,7 @@ import { getExercise } from '../data/exercises'
 import { getAssessment, readAssessments } from '../data/assessmentStore'
 import { generatePerformanceInsights } from '../insights/performanceInsights'
 import { resolveApiUrl } from '../api/config'
-import type { AssessmentResponse } from '../types'
+import type { AssessmentRecord, AssessmentResponse } from '../types'
 
 interface ResultsLocationState { response?: AssessmentResponse; exerciseKey?: string; recordId?: string; persistenceUnavailable?: boolean }
 
@@ -39,18 +40,27 @@ export function ResultsPage() {
   const { recordId: routeRecordId } = useParams()
   const { session } = useDemoAuth()
   const state = location.state as ResultsLocationState | null
-  const stored = routeRecordId
+  const [serverRecord, setServerRecord] = useState<AssessmentRecord | null>(null)
+  const [serverError, setServerError] = useState<string | null>(null)
+  const isServerRecordId = Boolean(routeRecordId && /^[a-f0-9]{32}$/.test(routeRecordId))
+  useEffect(() => {
+    if (!routeRecordId || !isServerRecordId || state?.response || !session) return
+    getAssessmentRecord(routeRecordId, session.email).then(setServerRecord).catch((error: unknown) => {
+      setServerError(error instanceof Error ? error.message : 'The persisted assessment could not be loaded.')
+    })
+  }, [routeRecordId, isServerRecordId, state?.response, session])
+  const stored = routeRecordId && !isServerRecordId
     ? getAssessment(routeRecordId)
     : state?.recordId
       ? getAssessment(state.recordId)
       : state?.response
         ? null
         : readAssessments().find((item) => item.submittedBy === session?.role) ?? null
-  const response = state?.response ?? stored?.response
+  const response = state?.response ?? serverRecord?.response ?? stored?.response
 
   if (!response) return <div className="page-stack">
     <section className="page-intro"><span className="eyebrow">ASSESSMENT OUTPUT</span><h2>Results</h2><p>Results display the data returned by the FastAPI assessment service.</p></section>
-    <div className="empty-results"><div className="empty-results-icon"><FileSearch size={27} /></div><h3>No assessment response available</h3><p>No saved assessment response was found in this browser. Submit a video to view its real API response here.</p><Link to="/exercises" className="button button-primary">Choose an assessment</Link></div>
+    <div className="empty-results"><div className="empty-results-icon"><FileSearch size={27} /></div><h3>{serverError ? 'Assessment record unavailable' : 'No assessment response available'}</h3><p>{serverError ?? (isServerRecordId ? 'Loading the saved assessment from the backend…' : 'No saved assessment response was found. Submit a video to view its real API response here.')}</p><Link to="/exercises" className="button button-primary">Choose an assessment</Link></div>
   </div>
 
   const exerciseKeyForType: Record<string, string> = { push_up: 'pushups', curl_up: 'curlups', vertical_jump: 'vertical-jumps', standing_broad_jump: 'broad-jumps' }
@@ -82,7 +92,7 @@ export function ResultsPage() {
 
   return <div className="page-stack">
     <Link to={`/assessments/${state?.exerciseKey ?? exerciseKeyForType[response.exercise_type] ?? 'pushups'}`} className="back-link"><ArrowLeft size={15} /> Run another assessment</Link>
-    <section className="results-heading"><div><span className="eyebrow">ACTUAL API RESPONSE · {response.input_filename}</span><h2>{exercise?.name ?? prettyLabel(response.exercise_type)}</h2><p>Processing status: <strong>{prettyLabel(response.processing_status)}</strong> · {response.video.width} × {response.video.height} px · {response.video.fps.toFixed(2)} FPS{stored ? ` · Saved ${new Date(stored.savedAt).toLocaleString()}` : ''}</p></div><span className="result-status"><CheckCircle2 size={15} /> {prettyLabel(response.processing_status)}</span></section>
+    <section className="results-heading"><div><span className="eyebrow">ACTUAL API RESPONSE · {response.input_filename}</span><h2>{exercise?.name ?? prettyLabel(response.exercise_type)}</h2><p>Processing status: <strong>{prettyLabel(response.processing_status)}</strong> · {response.video.width} × {response.video.height} px · {response.video.fps.toFixed(2)} FPS{serverRecord ? ` · Saved ${new Date(serverRecord.submitted_at).toLocaleString()}` : stored ? ` · Saved ${new Date(stored.savedAt).toLocaleString()}` : ''}</p></div><span className="result-status"><CheckCircle2 size={15} /> {prettyLabel(response.processing_status)}</span></section>
     {state?.persistenceUnavailable && <div className="inline-note">This result is available for this page visit, but browser storage could not save it for later.</div>}
     <div className="preliminary-banner"><ScanLine size={16} /><span>{response.assessment_notice ?? 'Experimental computer-vision output; not scientifically validated.'}</span></div>
 

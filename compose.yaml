@@ -1,0 +1,28 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: athletelens-backend:local
+    restart: unless-stopped
+    init: true
+    ports:
+      - "${API_PORT:-8000}:8000"
+    environment:
+      ATHLETELENS_POSE_MODEL: /data/models/pose_landmarker_lite.task
+      DATABASE_URL: "${DATABASE_URL:-sqlite:////data/assessments.sqlite3}"
+      ATHLETELENS_ANNOTATED_VIDEO_DIR: /data/annotated_videos
+      ATHLETELENS_CORS_ORIGINS: "${ATHLETELENS_CORS_ORIGINS:?Set an exact deployed frontend origin, e.g. https://athletelens.example}"
+      ATHLETELENS_MAX_UPLOAD_SIZE_BYTES: ${ATHLETELENS_MAX_UPLOAD_SIZE_BYTES:-104857600}
+    volumes:
+      - ${ATHLETELENS_DATA_DIR:-./backend/storage}:/data
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "from urllib.request import urlopen; urlopen('http://127.0.0.1:8000/health', timeout=3).read()"
+      interval: 30s
+      timeout: 5s
+      start_period: 45s
+      retries: 3

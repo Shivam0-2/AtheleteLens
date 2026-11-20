@@ -1,0 +1,10 @@
+.env
+.env.*
+!.env.docker.example
+!backend/.env.example
+web/.env
+web/.env.*.local
+backend/storage/assessments.sqlite3*
+backend/storage/annotated_videos/*
+!backend/storage/annotated_videos/.gitkeep
+backend/storage/models/*.task

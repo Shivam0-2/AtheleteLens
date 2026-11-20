@@ -1,0 +1,15 @@
+.git
+.env*
+web/.env*
+.venv
+**/.venv
+**/__pycache__
+**/*.py[cod]
+**/*.egg-info
+**/node_modules
+**/dist
+ai_engine/videos
+ai_engine/experimental_outputs
+ai_engine/models/*.task
+backend/storage/annotated_videos
+backend/storage/assessments.sqlite3*

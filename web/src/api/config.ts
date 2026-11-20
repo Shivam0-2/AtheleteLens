@@ -1,4 +1,4 @@
-const configuredBaseUrl = import.meta.env.VITE_API_BASE_URL?.trim()
+const configuredBaseUrl = import.meta.env.VITE_API_BASE_URL?.trim().replace(/\/+$/, '')
 
 /** Shared API origin/prefix. Defaults to Vite's same-origin /api proxy. */
 export const API_BASE_URL = configuredBaseUrl || '/api'
@@ -21,5 +21,7 @@ export const API_ENDPOINTS = {
     curlups: `${API_BASE_URL}/v1/assessments/curlups`,
     verticalJumps: `${API_BASE_URL}/v1/assessments/vertical-jumps`,
     broadJumps: `${API_BASE_URL}/v1/assessments/broad-jumps`,
+    history: `${API_BASE_URL}/v1/assessments/history`,
+    adminHistory: `${API_BASE_URL}/v1/assessments/history/admin`,
   },
 } as const

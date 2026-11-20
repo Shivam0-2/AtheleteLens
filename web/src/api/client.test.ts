@@ -43,7 +43,7 @@ describe('assessment API client', () => {
     ['vertical-jumps', API_ENDPOINTS.assessments.verticalJumps, protocolResponse('vertical_jump'), undefined],
     ['broad-jumps', API_ENDPOINTS.assessments.broadJumps, protocolResponse('standing_broad_jump'), undefined],
   ] as const)('posts video to %s with the matching response contract', async (exercise, endpoint, body, config) => {
-    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(body), { status: 200 }))
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(body), { status: 200, headers: { 'X-Assessment-ID': 'a'.repeat(32) } }))
     vi.stubGlobal('fetch', fetchMock)
 
     const result = await submitAssessment(exercise, videoFile(), config)
@@ -52,11 +52,13 @@ describe('assessment API client', () => {
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
     expect(url).toBe(endpoint)
     expect(init.method).toBe('POST')
-    expect(init.headers).toBeUndefined()
+    expect((init.headers as Record<string, string>)['Content-Type']).toBeUndefined()
     expect(init.body).toBeInstanceOf(FormData)
     expect((init.body as FormData).get('video')).toBeInstanceOf(File)
     expect((init.body as FormData).has('config_json')).toBe(config !== undefined)
-    expect(result.exercise_type).toBe(body.exercise_type)
+    expect(result.response.exercise_type).toBe(body.exercise_type)
+    expect(result.assessmentId).toBe('a'.repeat(32))
+    expect((init.headers as Record<string, string>)['X-Demo-User-ID']).toBe('demo-athlete')
   })
 
   it('sends curl-up thresholds and broad-jump calibration as JSON form fields', async () => {
@@ -95,5 +97,16 @@ describe('assessment API client', () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('{"processing_status":"completed"}', { status: 200 })))
     await expect(submitAssessment('pushups', videoFile()))
       .rejects.toMatchObject({ name: 'AssessmentApiError', message: 'The assessment server response did not match the expected API schema.' })
+  })
+
+  it('retrieves athlete and admin history from persisted API endpoints', async () => {
+    const records = [{ assessment_id: 'a'.repeat(32), athlete_id: 'athlete@example.test' }]
+    const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(new Response(JSON.stringify(records), { status: 200 })))
+    vi.stubGlobal('fetch', fetchMock)
+    const { getAthleteAssessmentHistory, getAdminAssessmentHistory } = await import('./client')
+    await expect(getAthleteAssessmentHistory('athlete@example.test')).resolves.toEqual(records)
+    await expect(getAdminAssessmentHistory()).resolves.toEqual(records)
+    expect(fetchMock.mock.calls[0][1]?.headers).toEqual({ 'X-Demo-User-ID': 'athlete@example.test' })
+    expect(fetchMock.mock.calls[1][1]?.headers).toEqual({ 'X-Demo-Role': 'admin' })
   })
 })

@@ -16,6 +16,8 @@ from starlette.datastructures import UploadFile
 
 from app.api.v1 import router as api_v1
 from app.core.config import Settings
+from app.db.migrations import upgrade_database
+from app.db.session import database_url_for
 from app.main import app
 from app.schemas.assessment import ExerciseAssessmentResponse, PushUpAssessmentResponse
 
@@ -49,6 +51,9 @@ class ExerciseAssessmentEndpointTests(unittest.TestCase):
         self.temp_directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp_directory.cleanup)
         self.model = Path(self.temp_directory.name) / "pose.task"
+        self.database = Path(self.temp_directory.name) / "history.sqlite3"
+        self.settings = Settings(self.model, 100, assessment_database_path=self.database)
+        upgrade_database(database_url_for(self.settings))
         self.model.write_bytes(b"model")
 
     @staticmethod
@@ -86,7 +91,7 @@ class ExerciseAssessmentEndpointTests(unittest.TestCase):
                     return exercise_response(exercise_type)
 
                 with (
-                    patch.object(api_v1, "get_settings", return_value=Settings(self.model, 100)),
+                    patch.object(api_v1, "get_settings", return_value=self.settings),
                     patch.object(api_v1, "assess_protocol_video", side_effect=fake_process),
                 ):
                     response = endpoint(video, config_json)
@@ -101,7 +106,7 @@ class ExerciseAssessmentEndpointTests(unittest.TestCase):
     def test_pushup_response_retains_legacy_fields_and_adds_common_metadata(self):
         video = self.upload()
         with (
-            patch.object(api_v1, "get_settings", return_value=Settings(self.model, 100)),
+            patch.object(api_v1, "get_settings", return_value=self.settings),
             patch.object(api_v1, "assess_pushup_video", return_value=PushUpAssessmentResponse(
                 input_filename="sample.mp4",
                 video={"fps": 30, "width": 640, "height": 480},

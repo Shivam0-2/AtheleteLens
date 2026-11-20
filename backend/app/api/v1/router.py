@@ -14,9 +14,10 @@ from athletelens_ai.assessments.calibration import GroundReferenceCalibration
 from athletelens_ai.assessments.curl_up import CurlUpAssessment, CurlUpConfig
 from athletelens_ai.assessments.vertical_jump import VerticalJumpAssessment, VerticalJumpConfig
 from athletelens_ai.video import VideoMetadata as EngineVideoMetadata
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, File, Form, Header, HTTPException, Response, UploadFile, status
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, ValidationError
+from sqlalchemy.exc import SQLAlchemyError
 
 from app.core.config import get_settings
 from app.schemas.assessment import ExerciseAssessmentResponse, PushUpAssessmentResponse
@@ -33,6 +34,8 @@ from app.services.errors import (
 )
 from app.services.protocol_assessment import assess_protocol_video
 from app.services.pushup_assessment import assess_pushup_video
+from app.services.assessment_store import get_assessment, list_assessments, save_assessment
+from app.db.session import database_url_for
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -149,6 +152,26 @@ def _handle_video_upload(video: UploadFile, processor: UploadProcessor) -> Any:
                 logger.warning("Could not remove temporary upload %s", temporary_path)
 
 
+def _save_completed_assessment(
+    result: Any,
+    athlete_id: str,
+    configuration: dict[str, Any],
+    response: Response | None,
+) -> Any:
+    """Persist one successful API result without changing its JSON response body."""
+    identity = athlete_id.strip()
+    if not identity or len(identity) > 200:
+        raise HTTPException(status_code=422, detail="X-Demo-User-ID must contain 1–200 characters.")
+    try:
+        record = save_assessment(database_url_for(get_settings()), identity, result, configuration)
+    except (OSError, ValueError, SQLAlchemyError) as exc:
+        logger.exception("Completed assessment could not be persisted")
+        raise HTTPException(status_code=500, detail="Assessment completed but could not be saved to history.") from exc
+    if response is not None:
+        response.headers["X-Assessment-ID"] = record.assessment_id
+    return result
+
+
 @router.get(
     "/assessments/annotated-videos/{video_id}",
     tags=["assessments"],
@@ -190,6 +213,8 @@ async def versioned_health_check() -> dict[str, str]:
 def create_pushup_assessment(
     video: UploadFile = File(..., description="Video file to assess"),
     config_json: Annotated[str | None, Form(description="Optional JSON push-up detector configuration.")] = None,
+    x_demo_user_id: Annotated[str, Header(alias="X-Demo-User-ID")] = "demo-athlete",
+    response: Response = None,
 ) -> PushUpAssessmentResponse:
     options = _request_config(config_json, PushUpRequestConfig, video=video)
     assert isinstance(options, PushUpRequestConfig)
@@ -202,7 +227,8 @@ def create_pushup_assessment(
         processor = lambda path, model, filename: assess_pushup_video(
             path, model, filename, detector_config=detector_config,
         )
-    return _handle_video_upload(video, processor)
+    result = _handle_video_upload(video, processor)
+    return _save_completed_assessment(result, x_demo_user_id, options.model_dump(), response)
 
 
 @router.post(
@@ -217,6 +243,8 @@ def create_curlup_assessment(
     config_json: Annotated[str, Form(
         description="JSON options; extended_angle_deg and flexed_angle_deg are required because the repository has no standardized curl-up thresholds.",
     )],
+    x_demo_user_id: Annotated[str, Header(alias="X-Demo-User-ID")] = "demo-athlete",
+    response: Response = None,
 ) -> ExerciseAssessmentResponse:
     options = _request_config(config_json, CurlUpRequestConfig, required=True, video=video)
     assert isinstance(options, CurlUpRequestConfig)
@@ -228,10 +256,11 @@ def create_curlup_assessment(
         )
         return CurlUpAssessment(config)
 
-    return _handle_video_upload(
+    result = _handle_video_upload(
         video,
         lambda path, model, filename: assess_protocol_video(path, model, filename, factory),
     )
+    return _save_completed_assessment(result, x_demo_user_id, options.model_dump(), response)
 
 
 @router.post(
@@ -244,15 +273,18 @@ def create_curlup_assessment(
 def create_vertical_jump_assessment(
     video: UploadFile = File(..., description="Video file to assess"),
     config_json: Annotated[str | None, Form(description="Optional JSON vertical-jump detector configuration.")] = None,
+    x_demo_user_id: Annotated[str, Header(alias="X-Demo-User-ID")] = "demo-athlete",
+    response: Response = None,
 ) -> ExerciseAssessmentResponse:
     options = _request_config(config_json, VerticalJumpRequestConfig, video=video)
     assert isinstance(options, VerticalJumpRequestConfig)
     config = VerticalJumpConfig(**options.model_dump())
     factory = lambda _metadata: VerticalJumpAssessment(config)
-    return _handle_video_upload(
+    result = _handle_video_upload(
         video,
         lambda path, model, filename: assess_protocol_video(path, model, filename, factory),
     )
+    return _save_completed_assessment(result, x_demo_user_id, options.model_dump(), response)
 
 
 @router.post(
@@ -267,6 +299,8 @@ def create_broad_jump_assessment(
     config_json: Annotated[str | None, Form(
         description="Optional JSON broad-jump configuration, including a ground-reference endpoint pair and its known length in meters.",
     )] = None,
+    x_demo_user_id: Annotated[str, Header(alias="X-Demo-User-ID")] = "demo-athlete",
+    response: Response = None,
 ) -> ExerciseAssessmentResponse:
     options = _request_config(config_json, BroadJumpRequestConfig, video=video)
     assert isinstance(options, BroadJumpRequestConfig)
@@ -284,7 +318,51 @@ def create_broad_jump_assessment(
     }
     config = BroadJumpConfig(**detector_values, ground_reference=reference)
     factory = lambda _metadata: BroadJumpAssessment(config)
-    return _handle_video_upload(
+    result = _handle_video_upload(
         video,
         lambda path, model, filename: assess_protocol_video(path, model, filename, factory),
     )
+    return _save_completed_assessment(result, x_demo_user_id, options.model_dump(), response)
+
+
+@router.get("/assessments/history", tags=["assessments"], summary="Retrieve one demo athlete's assessment history")
+def assessment_history(
+    x_demo_user_id: Annotated[str, Header(alias="X-Demo-User-ID")] = "demo-athlete",
+) -> list[dict[str, Any]]:
+    """Return records associated with the supplied demo identity label."""
+    identity = x_demo_user_id.strip()
+    if not identity or len(identity) > 200:
+        raise HTTPException(status_code=422, detail="X-Demo-User-ID must contain 1–200 characters.")
+    try:
+        return [item.model_dump(mode="json") for item in list_assessments(database_url_for(get_settings()), identity)]
+    except (OSError, ValueError, SQLAlchemyError) as exc:
+        raise HTTPException(status_code=500, detail="Assessment history is unavailable.") from exc
+
+
+@router.get("/assessments/history/admin", tags=["assessments"], summary="List persisted demo assessments for diagnostics")
+def admin_assessment_history(
+    x_demo_role: Annotated[str, Header(alias="X-Demo-Role")] = "",
+) -> list[dict[str, Any]]:
+    """Expose all records to the demo diagnostics UI; this is not authorization."""
+    if x_demo_role != "admin":
+        raise HTTPException(status_code=403, detail="The demo admin role is required.")
+    try:
+        return [item.model_dump(mode="json") for item in list_assessments(database_url_for(get_settings()))]
+    except (OSError, ValueError, SQLAlchemyError) as exc:
+        raise HTTPException(status_code=500, detail="Assessment history is unavailable.") from exc
+
+
+@router.get("/assessments/history/{assessment_id}", tags=["assessments"], summary="Retrieve an individual assessment record")
+def assessment_detail(
+    assessment_id: str,
+    x_demo_user_id: Annotated[str, Header(alias="X-Demo-User-ID")] = "demo-athlete",
+) -> dict[str, Any]:
+    if not re.fullmatch(r"[a-f0-9]{32}", assessment_id):
+        raise HTTPException(status_code=404, detail="Assessment record not found.")
+    try:
+        record = get_assessment(database_url_for(get_settings()), assessment_id)
+    except (OSError, ValueError, SQLAlchemyError) as exc:
+        raise HTTPException(status_code=500, detail="Assessment history is unavailable.") from exc
+    if record is None or record.athlete_id != x_demo_user_id.strip():
+        raise HTTPException(status_code=404, detail="Assessment record not found.")
+    return record.model_dump(mode="json")

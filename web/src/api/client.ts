@@ -1,5 +1,5 @@
 import { API_ENDPOINTS } from './config'
-import type { AssessmentResponse, ExerciseKey } from '../types'
+import type { AssessmentRecord, AssessmentResponse, ExerciseKey } from '../types'
 
 export class AssessmentApiError extends Error {
   readonly status?: number
@@ -11,6 +11,11 @@ export class AssessmentApiError extends Error {
     this.status = status
     this.detail = detail
   }
+}
+
+export interface AssessmentSubmission {
+  response: AssessmentResponse
+  assessmentId: string | null
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -100,7 +105,8 @@ export async function submitAssessment(
   exercise: ExerciseKey,
   video: File,
   config?: Record<string, unknown>,
-): Promise<AssessmentResponse> {
+  demoUserId = 'demo-athlete',
+): Promise<AssessmentSubmission> {
   if (exercise === 'curlups') {
     const extended = config?.extended_angle_deg
     const flexed = config?.flexed_angle_deg
@@ -126,6 +132,7 @@ export async function submitAssessment(
     response = await fetch(API_ENDPOINTS.assessments[endpointKey[exercise]], {
       method: 'POST',
       body: form,
+      headers: { 'X-Demo-User-ID': demoUserId },
     })
   } catch (error) {
     throw new AssessmentApiError(
@@ -153,5 +160,42 @@ export async function submitAssessment(
   if (payload.exercise_type !== expectedType[exercise]) {
     throw new AssessmentApiError('The assessment server returned a response for a different exercise.', response.status, payload)
   }
-  return payload
+  return { response: payload, assessmentId: response.headers.get('X-Assessment-ID') }
+}
+
+async function fetchRecords(url: string, headers: Record<string, string>): Promise<AssessmentRecord[]> {
+  let response: Response
+  try { response = await fetch(url, { headers }) } catch {
+    throw new AssessmentApiError('Could not retrieve assessment history from the API.')
+  }
+  if (!response.ok) throw await readError(response)
+  let payload: unknown
+  try { payload = await response.json() as unknown } catch {
+    throw new AssessmentApiError('The history service returned invalid JSON.', response.status)
+  }
+  if (!Array.isArray(payload)) throw new AssessmentApiError('The history response did not match the expected schema.', response.status)
+  return payload as AssessmentRecord[]
+}
+
+export function getAthleteAssessmentHistory(demoUserId: string): Promise<AssessmentRecord[]> {
+  return fetchRecords(API_ENDPOINTS.assessments.history, { 'X-Demo-User-ID': demoUserId })
+}
+
+export function getAdminAssessmentHistory(): Promise<AssessmentRecord[]> {
+  return fetchRecords(API_ENDPOINTS.assessments.adminHistory, { 'X-Demo-Role': 'admin' })
+}
+
+export async function getAssessmentRecord(assessmentId: string, demoUserId: string): Promise<AssessmentRecord> {
+  let response: Response
+  try {
+    response = await fetch(`${API_ENDPOINTS.assessments.history}/${encodeURIComponent(assessmentId)}`, {
+      headers: { 'X-Demo-User-ID': demoUserId },
+    })
+  } catch {
+    throw new AssessmentApiError('Could not retrieve this assessment record from the API.')
+  }
+  if (!response.ok) throw await readError(response)
+  try { return await response.json() as AssessmentRecord } catch {
+    throw new AssessmentApiError('The assessment record response was invalid.', response.status)
+  }
 }

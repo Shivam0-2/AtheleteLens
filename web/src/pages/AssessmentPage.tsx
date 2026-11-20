@@ -149,11 +149,13 @@ export function AssessmentPage() {
     setUploadState('uploading')
     setErrorMessage(null)
     try {
-      const response = await submitAssessment(selectedExercise.key, file, config)
+      const submission = await submitAssessment(selectedExercise.key, file, config, session?.email ?? 'demo-athlete')
+      const response = submission.response
       const saved = saveAssessment(response, session?.role === 'admin' ? 'admin' : 'athlete')
       setUploadState('success')
-      navigate(saved ? `/results/${saved.id}` : '/results', {
-        state: { response, exerciseKey: selectedExercise.key, recordId: saved?.id, persistenceUnavailable: !saved },
+      const recordId = submission.assessmentId ?? saved?.id
+      navigate(recordId ? `/results/${recordId}` : '/results', {
+        state: { response, exerciseKey: selectedExercise.key, recordId, persistenceUnavailable: !submission.assessmentId },
       })
     } catch (error) {
       setUploadState('failed')

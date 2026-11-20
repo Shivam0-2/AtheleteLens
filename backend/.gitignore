@@ -1,2 +1,7 @@
+__pycache__/
 storage/annotated_videos/*
 !storage/annotated_videos/.gitkeep
+storage/assessments.sqlite3
+storage/assessments.sqlite3-shm
+storage/assessments.sqlite3-wal
+storage/models/*.task

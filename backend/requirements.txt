@@ -1,4 +1,8 @@
 fastapi>=0.115,<1.0
 uvicorn>=0.34,<1.0
 python-multipart>=0.0.20,<1
+SQLAlchemy>=2.0,<3
+alembic>=1.14,<2
+psycopg[binary]>=3.2,<4
+python-dotenv>=1.0,<2
 -e ../ai_engine

@@ -74,6 +74,18 @@ export interface ProtocolAssessmentResponse extends BaseAssessmentResponse {
 
 export type AssessmentResponse = PushUpAssessmentResponse | ProtocolAssessmentResponse
 
+export interface AssessmentRecord {
+  assessment_id: string
+  athlete_id: string
+  exercise_type: string
+  submitted_at: string
+  response: AssessmentResponse
+  configuration: Record<string, unknown>
+  algorithm_version: string | null
+  annotated_video_id: string | null
+  annotated_video_url: string | null
+}
+
 export interface RequestError {
   message: string
   status?: number

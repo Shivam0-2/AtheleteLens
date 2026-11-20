@@ -14,6 +14,8 @@ from starlette.datastructures import UploadFile
 
 from app.api.v1 import router as api_v1
 from app.core.config import Settings
+from app.db.migrations import upgrade_database
+from app.db.session import database_url_for
 from app.schemas.assessment import (
     DetectorConfiguration,
     PushUpAssessmentResponse,
@@ -153,6 +155,9 @@ class PushUpAssessmentEndpointTests(unittest.TestCase):
         self.temp_directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp_directory.cleanup)
         self.model = Path(self.temp_directory.name) / "pose.task"
+        self.database = Path(self.temp_directory.name) / "history.sqlite3"
+        self.settings = Settings(self.model, 100, assessment_database_path=self.database)
+        upgrade_database(database_url_for(self.settings))
         self.model.write_bytes(b"model placeholder")
 
     def upload(self, filename: str, content: bytes) -> UploadFile:
@@ -171,7 +176,7 @@ class PushUpAssessmentEndpointTests(unittest.TestCase):
             return response_fixture(input_filename)
 
         with (
-            patch.object(api_v1, "get_settings", return_value=Settings(self.model, 100)),
+            patch.object(api_v1, "get_settings", return_value=Settings(self.model, 100, assessment_database_path=self.database)),
             patch.object(api_v1, "assess_pushup_video", side_effect=fake_assess),
         ):
             response = api_v1.create_pushup_assessment(video)
@@ -190,7 +195,7 @@ class PushUpAssessmentEndpointTests(unittest.TestCase):
     def test_oversized_upload_returns_413_and_skips_processing(self):
         video = self.upload("sample.mp4", b"1234")
         with (
-            patch.object(api_v1, "get_settings", return_value=Settings(self.model, 3)),
+            patch.object(api_v1, "get_settings", return_value=Settings(self.model, 3, assessment_database_path=self.database)),
             patch.object(api_v1, "assess_pushup_video") as assess,
             self.assertRaises(HTTPException) as raised,
         ):
@@ -203,7 +208,7 @@ class PushUpAssessmentEndpointTests(unittest.TestCase):
         video = self.upload("sample.mp4", b"video")
         missing_model = self.model.with_name("missing.task")
         with (
-            patch.object(api_v1, "get_settings", return_value=Settings(missing_model, 100)),
+            patch.object(api_v1, "get_settings", return_value=Settings(missing_model, 100, assessment_database_path=self.database)),
             self.assertRaises(HTTPException) as raised,
         ):
             api_v1.create_pushup_assessment(video)
@@ -213,7 +218,7 @@ class PushUpAssessmentEndpointTests(unittest.TestCase):
     def test_unreadable_video_returns_422(self):
         video = self.upload("sample.mp4", b"not actually a video")
         with (
-            patch.object(api_v1, "get_settings", return_value=Settings(self.model, 100)),
+            patch.object(api_v1, "get_settings", return_value=Settings(self.model, 100, assessment_database_path=self.database)),
             patch.object(api_v1, "assess_pushup_video", side_effect=service.InvalidVideoError("bad video")),
             self.assertRaises(HTTPException) as raised,
         ):
@@ -224,7 +229,7 @@ class PushUpAssessmentEndpointTests(unittest.TestCase):
     def test_processing_failure_returns_500(self):
         video = self.upload("sample.mp4", b"video")
         with (
-            patch.object(api_v1, "get_settings", return_value=Settings(self.model, 100)),
+            patch.object(api_v1, "get_settings", return_value=Settings(self.model, 100, assessment_database_path=self.database)),
             patch.object(api_v1, "assess_pushup_video", side_effect=service.AssessmentProcessingError("failure")),
             patch.object(api_v1.logger, "exception"),
             self.assertRaises(HTTPException) as raised,
