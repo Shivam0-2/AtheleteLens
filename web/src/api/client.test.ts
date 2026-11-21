@@ -108,5 +108,17 @@ describe('assessment API client', () => {
     await expect(getAdminAssessmentHistory()).resolves.toEqual(records)
     expect(fetchMock.mock.calls[0][1]?.headers).toEqual({ 'X-Demo-User-ID': 'athlete@example.test' })
     expect(fetchMock.mock.calls[1][1]?.headers).toEqual({ 'X-Demo-Role': 'admin' })
+    expect(fetchMock.mock.calls[0][1]?.signal).toBeInstanceOf(AbortSignal)
+  })
+
+  it('times out stalled history requests with a message that assessment uploads remain available', async () => {
+    const abortError = new Error('aborted')
+    abortError.name = 'AbortError'
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(abortError))
+    const { getAthleteAssessmentHistory } = await import('./client')
+    await expect(getAthleteAssessmentHistory('athlete@example.test')).rejects.toMatchObject({
+      name: 'AssessmentApiError',
+      message: expect.stringContaining('You can still submit an assessment.'),
+    })
   })
 })

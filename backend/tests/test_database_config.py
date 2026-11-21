@@ -6,8 +6,10 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from sqlalchemy import event
+
 from app.core import config
-from app.db.session import database_url_for
+from app.db.session import create_database_engine, database_url_for
 
 
 class DatabaseDotenvConfigurationTests(unittest.TestCase):
@@ -46,6 +48,22 @@ class DatabaseDotenvConfigurationTests(unittest.TestCase):
             settings = config.get_settings()
             resolved = database_url_for(settings)
         self.assertTrue(resolved.startswith("sqlite:///"))
+
+    def test_postgresql_engine_has_a_finite_connection_timeout(self) -> None:
+        engine = create_database_engine("postgresql+psycopg://user:pass@example.test/db")
+        captured: dict[str, object] = {}
+
+        def capture_connect_args(_dialect, _record, _args, kwargs) -> None:
+            captured.update(kwargs)
+            raise RuntimeError("stop before opening a network connection")
+
+        event.listen(engine, "do_connect", capture_connect_args)
+        try:
+            with self.assertRaisesRegex(RuntimeError, "stop before opening"):
+                engine.connect()
+        finally:
+            engine.dispose()
+        self.assertEqual(captured.get("connect_timeout"), 8)
 
 
 if __name__ == "__main__":

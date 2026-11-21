@@ -73,7 +73,12 @@ def assess_pushup_video(
     if not model_path.is_file():
         raise MissingPoseModelError(f"Pose model file is unavailable: {model_path}")
 
-    config = detector_config or DetectorConfig()
+    # Match the previously evaluated phase-based profile for the live API.
+    # Other DetectorConfig callers retain the historical 90°/160° defaults.
+    config = detector_config or DetectorConfig(
+        bottom_angle_deg=100.0,
+        top_angle_deg=140.0,
+    )
     try:
         config.validate()
     except ValueError as exc:

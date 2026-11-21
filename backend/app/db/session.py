@@ -34,6 +34,10 @@ def create_database_engine(database_url: str) -> Engine:
     options = {"pool_pre_ping": True}
     if normalized.startswith("sqlite:"):
         options["connect_args"] = {"check_same_thread": False, "timeout": 15}
+    elif normalized.startswith("postgresql+"):
+        # Bound a failed Supabase/network connection so a synchronous history
+        # request cannot occupy a FastAPI worker thread indefinitely.
+        options["connect_args"] = {"connect_timeout": 8}
     return create_engine(normalized, **options)
 
 

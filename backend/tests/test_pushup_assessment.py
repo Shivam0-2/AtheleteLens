@@ -21,6 +21,7 @@ from app.schemas.assessment import (
     PushUpAssessmentResponse,
     VideoMetadata,
 )
+from app.schemas.assessment_requests import PushUpRequestConfig
 from app.services import pushup_assessment as service
 
 
@@ -63,8 +64,8 @@ def response_fixture(filename: str = "sample.mp4") -> PushUpAssessmentResponse:
         minimum_elbow_angle_degrees=120,
         maximum_elbow_angle_degrees=120,
         detector_configuration=DetectorConfiguration(
-            bottom_angle_deg=90,
-            top_angle_deg=160,
+            bottom_angle_deg=100,
+            top_angle_deg=140,
             hysteresis_deg=5,
             confirmation_frames=2,
             min_repetition_duration_s=0.25,
@@ -78,6 +79,16 @@ def response_fixture(filename: str = "sample.mp4") -> PushUpAssessmentResponse:
 
 
 class PushUpAssessmentServiceTests(unittest.TestCase):
+    def test_live_pushup_request_defaults_match_phase_experiment_profile(self):
+        options = PushUpRequestConfig()
+        self.assertEqual(options.bottom_angle_deg, 100)
+        self.assertEqual(options.top_angle_deg, 140)
+        self.assertEqual(options.hysteresis_deg, 5)
+        self.assertEqual(options.confirmation_frames, 2)
+        self.assertEqual(options.min_repetition_duration_s, 0.25)
+        self.assertEqual(options.max_repetition_duration_s, 3)
+        self.assertEqual(options.max_measurement_gap_s, 0.25)
+
     def _run_with_mocks(self, video_path: Path, model_path: Path):
         # Eight samples per phase leave enough valid support for the shared
         # centered seven-frame median while keeping the cycle under 3 seconds.
@@ -113,8 +124,8 @@ class PushUpAssessmentServiceTests(unittest.TestCase):
         self.assertEqual(response.total_frames_processed, 40)
         self.assertEqual(response.frames_with_detected_poses, 40)
         self.assertEqual(response.pose_detection_percentage, 100)
-        self.assertEqual(response.detector_configuration.bottom_angle_deg, 90)
-        self.assertEqual(response.detector_configuration.top_angle_deg, 160)
+        self.assertEqual(response.detector_configuration.bottom_angle_deg, 100)
+        self.assertEqual(response.detector_configuration.top_angle_deg, 140)
         self.assertEqual(len(response.accepted_repetition_timestamps), 1)
         self.assertTrue(capture.released)
         self.assertTrue(landmarker.closed)

@@ -14,8 +14,8 @@ class _RequestConfig(BaseModel):
 
 
 class PushUpRequestConfig(_RequestConfig):
-    bottom_angle_deg: float = Field(default=90, ge=0, le=180)
-    top_angle_deg: float = Field(default=160, ge=0, le=180)
+    bottom_angle_deg: float = Field(default=100, ge=0, le=180)
+    top_angle_deg: float = Field(default=140, ge=0, le=180)
     hysteresis_deg: float = Field(default=5, ge=0)
     confirmation_frames: int = Field(default=2, ge=1)
     min_repetition_duration_s: float = Field(default=0.25, ge=0)

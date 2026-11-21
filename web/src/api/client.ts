@@ -18,6 +18,8 @@ export interface AssessmentSubmission {
   assessmentId: string | null
 }
 
+const HISTORY_REQUEST_TIMEOUT_MS = 10_000
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
@@ -164,17 +166,26 @@ export async function submitAssessment(
 }
 
 async function fetchRecords(url: string, headers: Record<string, string>): Promise<AssessmentRecord[]> {
-  let response: Response
-  try { response = await fetch(url, { headers }) } catch {
-    throw new AssessmentApiError('Could not retrieve assessment history from the API.')
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), HISTORY_REQUEST_TIMEOUT_MS)
+  try {
+    const response = await fetch(url, { headers, signal: controller.signal })
+    if (!response.ok) throw await readError(response)
+    let payload: unknown
+    try { payload = await response.json() as unknown } catch {
+      throw new AssessmentApiError('The history service returned invalid JSON.', response.status)
+    }
+    if (!Array.isArray(payload)) throw new AssessmentApiError('The history response did not match the expected schema.', response.status)
+    return payload as AssessmentRecord[]
+  } catch (error) {
+    if (error instanceof AssessmentApiError) throw error
+    if (controller.signal.aborted || (error instanceof Error && error.name === 'AbortError')) {
+      throw new AssessmentApiError('Assessment history timed out or is unavailable. You can still submit an assessment.')
+    }
+    throw new AssessmentApiError('Could not retrieve assessment history from the API. You can still submit an assessment.')
+  } finally {
+    clearTimeout(timeoutId)
   }
-  if (!response.ok) throw await readError(response)
-  let payload: unknown
-  try { payload = await response.json() as unknown } catch {
-    throw new AssessmentApiError('The history service returned invalid JSON.', response.status)
-  }
-  if (!Array.isArray(payload)) throw new AssessmentApiError('The history response did not match the expected schema.', response.status)
-  return payload as AssessmentRecord[]
 }
 
 export function getAthleteAssessmentHistory(demoUserId: string): Promise<AssessmentRecord[]> {
